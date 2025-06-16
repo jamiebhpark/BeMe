@@ -1,12 +1,18 @@
 //
-//  GuidelinePage.swift
-//  BeMeChallenge
+//  Presentation/Home/GuidelinePage.swift
 //
 import SwiftUI
 
 struct GuidelinePage: View {
     /// OnboardingView에서 바인딩
     @Binding var agreed: Bool
+
+    /// 활성 상태용 그라데이션
+    private var gradient: LinearGradient {
+        LinearGradient(
+            colors: [Color("PrimaryGradientStart"), Color("PrimaryGradientEnd")],
+            startPoint: .leading, endPoint: .trailing)
+    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -25,16 +31,23 @@ struct GuidelinePage: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Toggle("위 가이드라인을 모두 읽고 동의합니다.", isOn: $agreed)
-                .toggleStyle(CheckboxToggleStyle())   // ✅ iOS 호환
+                .toggleStyle(CheckboxToggleStyle())
                 .padding(.top, 8)
 
+            // ✅ 버튼 배경을 ViewBuilder closure로 분기
             Button("동의하고 시작하기") {
-                agreed = true          // 단순 상태 변경–실제 완료는 OnboardingView에서
+                agreed = true
             }
             .disabled(!agreed)
             .frame(maxWidth: .infinity)
             .padding()
-            .background(agreed ? Color.blue : Color.gray.opacity(0.4))
+            .background {
+                if agreed {
+                    gradient
+                } else {
+                    Color.gray.opacity(0.3)
+                }
+            }
             .foregroundColor(.white)
             .cornerRadius(8)
         }

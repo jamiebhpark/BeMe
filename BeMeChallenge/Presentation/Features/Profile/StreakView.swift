@@ -1,4 +1,7 @@
-// Presentation/Features/Profile/StreakView.swift
+//
+//  Presentation/Features/Profile/StreakView.swift
+//
+
 import SwiftUI
 
 struct StreakView: View {
@@ -7,26 +10,28 @@ struct StreakView: View {
 
     var body: some View {
         HStack {
-            VStack {
+
+            // 총 참여
+            VStack(spacing: 4) {
                 Text("총 참여")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 Text("\(totalParticipations)회")
-                    .font(.headline).bold()
-                    .foregroundColor(.primary)
+                    .font(.headline.bold())
             }
             .frame(maxWidth: .infinity)
 
             Divider()
-                .frame(height: 40)
+                .frame(height: 42)
                 .padding(.horizontal)
 
-            VStack {
+            // 연속 참여
+            VStack(spacing: 4) {
                 Text("연속 참여")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 Text("\(streakDays)일")
-                    .font(.headline).bold()
+                    .font(.headline.bold())
                     .foregroundColor(Color("PrimaryGradientStart"))
             }
             .frame(maxWidth: .infinity)

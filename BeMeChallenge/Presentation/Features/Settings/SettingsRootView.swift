@@ -1,4 +1,6 @@
-// Presentation/Features/Settings/SettingsRootView.swift
+// SettingsRootView.swift
+// (불필요한 import, 코멘트 삭제 없이 전체 파일 통째로 교체해도 됩니다)
+
 import SwiftUI
 
 struct SettingsRootView: View {
@@ -7,22 +9,30 @@ struct SettingsRootView: View {
 
     var body: some View {
         List {
-            Section("개인정보") {
+
+            // ── 개인정보 ───────────────────────────────
+            Section(header: Text("개인정보")) {
                 NavigationLink("개인정보 설정") {
                     ProfilePrivacyView()
                         .environmentObject(modalC)
                 }
             }
-            Section("커뮤니티") {
+
+            // ── 커뮤니티 ───────────────────────────────
+            Section(header: Text("커뮤니티")) {
                 NavigationLink("커뮤니티 가이드라인") {
                     CommunityGuidelineView()
                 }
             }
-            Section("지원") {
-                NavigationLink("앱 정보")      { AboutView() }
-                NavigationLink("도움말 & FAQ") { HelpFAQView() }
-                NavigationLink("피드백 보내기"){ FeedbackView() }
+
+            // ── 지원 ──────────────────────────────────
+            Section(header: Text("지원")) {
+                NavigationLink("앱 정보")        { AboutView() }
+                NavigationLink("도움말 & FAQ")   { HelpFAQView() }
+                NavigationLink("피드백 보내기")  { FeedbackView() }
             }
+
+            // ── 계정 ──────────────────────────────────
             Section {
                 Button("로그아웃", role: .destructive) {
                     AuthViewModel().signOut()
@@ -33,10 +43,5 @@ struct SettingsRootView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("설정")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button("닫기") { dismiss() }
-            }
-        }
     }
 }

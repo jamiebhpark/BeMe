@@ -1,4 +1,4 @@
-//  CameraPreview.swift
+//  Presentation/Features/Camera/CameraPreview.swift
 import SwiftUI
 import AVFoundation
 

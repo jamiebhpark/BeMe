@@ -1,46 +1,61 @@
-// Presentation/Features/ChallengeDetail/ChallengeDetailView.swift
+//
+//  Presentation/Features/ChallengeDetail/ChallengeDetailView.swift
+//  BeMeChallenge
+//
+
 import SwiftUI
 
 struct ChallengeDetailView: View {
     let challengeId: String
+
     @StateObject private var vm = ChallengeDetailViewModel()
     @EnvironmentObject private var modalC: ModalCoordinator
     @Environment(\.dismiss) private var dismiss
 
+    // MARK: - View ---------------------------------------------------------
     var body: some View {
         VStack {
             switch vm.postsState {
+
+            // ── 로딩 ──────────────────────────────────────────────────
             case .idle, .loading:
                 ProgressView()
+                    .tint(Color("Lavender"))                 // 💜
                     .frame(maxHeight: .infinity)
 
+            // ── 실패 ──────────────────────────────────────────────────
             case .failed(let error):
                 VStack(spacing: 16) {
                     Text("로드 실패: \(error.localizedDescription)")
                         .multilineTextAlignment(.center)
-                    Button("재시도") {
-                        vm.fetch(challengeId)
+
+                    // Gradient-styled retry button
+                    Button {
+                        Task { await vm.loadInitial(challengeId: challengeId) }
+                    } label: {
+                        Text("재시도")
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .foregroundColor(.white)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color("Lavender"), Color("SkyBlue")],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(10)
                     }
+                    .frame(maxWidth: 200)
                 }
                 .padding()
 
-            case .loaded(let posts):
-                // 이제 initialPostID 없이 호출
-                FeedView(
-                    posts:     posts,
-                    userCache: vm.userCache,
-                    onLike:    vm.like,
-                    onReport:  { post in modalC.showAlert(.reportConfirm(post: post)) },
-                    onDelete:  { post in
-                        vm.deletePost(post)
-                        modalC.resetAlert()
-                        DispatchQueue.main.async {
-                            modalC.showToast(ToastItem(message: "삭제 완료"))
-                        }
-                    }
-                )
+            // ── 성공 ──────────────────────────────────────────────────
+            case .loaded:
+                FeedView(vm: vm, challengeId: challengeId)
             }
         }
+        // ── NavigationBar --------------------------------------------------
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -52,28 +67,29 @@ struct ChallengeDetailView: View {
                         Text("챌린지")
                     }
                 }
+                .tint(Color("Lavender"))     // 💜 백 버튼 색상
             }
         }
-        .onAppear { vm.fetch(challengeId) }
+        // 최초 로드
+        .task { await vm.loadInitial(challengeId: challengeId) }
+        // 모달 Alert 처리
         .alert(item: $modalC.modalAlert, content: makeAlert)
     }
 
+    // MARK: - Alert Builder -----------------------------------------------
     private func makeAlert(for alert: ModalAlert) -> Alert {
         switch alert {
+
         case .manage(let post):
             return Alert(
                 title: Text("게시물 관리"),
                 primaryButton: .destructive(Text("삭제")) {
-                    DispatchQueue.main.async {
-                        modalC.showAlert(.deleteConfirm(post: post))
-                    }
+                    modalC.showAlert(.deleteConfirm(post: post))
                 },
                 secondaryButton: .default(Text("신고")) {
-                    DispatchQueue.main.async {
-                        modalC.showAlert(.reportConfirm(post: post))
-                    }
+                    modalC.showAlert(.reportConfirm(post: post))
                 }
-                )
+            )
 
         case .deleteConfirm(let post):
             return Alert(
@@ -82,13 +98,9 @@ struct ChallengeDetailView: View {
                 primaryButton: .destructive(Text("삭제")) {
                     vm.deletePost(post)
                     modalC.resetAlert()
-                    DispatchQueue.main.async {
-                        modalC.showToast(ToastItem(message: "삭제 완료"))
-                    }
+                    modalC.showToast(ToastItem(message: "삭제 완료"))
                 },
-                secondaryButton: .cancel {
-                    modalC.resetAlert()
-                }
+                secondaryButton: .cancel { modalC.resetAlert() }
             )
 
         case .reportConfirm(let post):
@@ -98,13 +110,9 @@ struct ChallengeDetailView: View {
                 primaryButton: .destructive(Text("신고")) {
                     vm.report(post)
                     modalC.resetAlert()
-                    DispatchQueue.main.async {
-                        modalC.showToast(ToastItem(message: "신고 접수"))
-                    }
+                    modalC.showToast(ToastItem(message: "신고 접수"))
                 },
-                secondaryButton: .cancel {
-                    modalC.resetAlert()
-                }
+                secondaryButton: .cancel { modalC.resetAlert() }
             )
         }
     }

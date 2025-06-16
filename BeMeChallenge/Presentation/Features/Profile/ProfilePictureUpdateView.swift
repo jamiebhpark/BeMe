@@ -1,4 +1,6 @@
-// Presentation/Features/Profile/ProfilePictureUpdateView.swift
+//
+//  Presentation/Features/Profile/ProfilePictureUpdateView.swift
+//
 
 import SwiftUI
 
@@ -9,77 +11,62 @@ struct ProfilePictureUpdateView: View {
     @State private var selectedImage: UIImage?
     @State private var isPickerPresented = false
     @State private var isUploading      = false
-    @State private var uploadError: String?
+    @State private var uploadError:     String?
 
-    // Loadable<UserProfile>에서 꺼내기
-    /// 프로필 아바타 URL (캐시‐버스터 포함)
+    /// 현재 아바타 URL (캐시-버스터 포함)
     private var avatarURL: URL? {
         guard case .loaded(let prof) = vm.profileState else { return nil }
-        return prof.effectiveProfileImageURL        // ← 한 줄로 끝
+        return prof.effectiveProfileImageURL
     }
 
-
+    // ────────────────────────────────────────────────── View
     var body: some View {
-        VStack(spacing: 24) {
-            // ── 썸네일
-            Group {
-                if let img = selectedImage {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                } else if let url = avatarURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .empty:
-                            ProgressView()
-                        case .failure:
-                            Image("defaultAvatar")
-                                .resizable()
-                        case .success(let img):
-                            img.resizable().scaledToFill()
-                        @unknown default:
-                            EmptyView()
-                        }
-                    }
-                } else {
-                    Image("defaultAvatar")
-                        .resizable()
-                }
-            }
-            .frame(width: 150, height: 150)
-            .clipShape(Circle())
-            .shadow(radius: 4)
+        VStack(spacing: 28) {
 
-            // ── 버튼
+            // ① 썸네일
+            avatarView
+                .frame(width: 160, height: 160)
+                .clipShape(Circle())
+                .shadow(radius: 6)
+
+            // ② 버튼 스택
             VStack(spacing: 16) {
-                Button("프로필 사진 선택") {
+                // 사진 선택
+                Button {
                     isPickerPresented = true
+                } label: {
+                    Label("프로필 사진 선택", systemImage: "photo")
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal)
+                .buttonStyle(GradientCapsule())
 
-                Button("기본 아바타로 되돌리기") {
+                // 기본 아바타
+                Button {
                     vm.resetProfilePicture()
                     dismiss()
+                } label: {
+                    Label("기본 아바타로 되돌리기", systemImage: "arrow.uturn.backward")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal)
 
-                Button("사진 업데이트") {
+                // 업로드
+                Button {
                     guard let img = selectedImage else { return }
                     upload(img)
+                } label: {
+                    if isUploading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Label("사진 업데이트", systemImage: "arrow.up.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal)
+                .buttonStyle(GradientCapsule())
+                .disabled(isUploading || selectedImage == nil)
             }
-
-            if isUploading {
-                ProgressView("업로드 중…")
-                    .padding(.top, 8)
-            }
+            .padding(.horizontal)
 
             Spacer()
         }
@@ -91,24 +78,60 @@ struct ProfilePictureUpdateView: View {
         .alert("업로드 오류",
                isPresented: Binding(get: { uploadError != nil },
                                     set: { _ in uploadError = nil })) {
-            Button("확인", role: .cancel) {}
+            Button("확인", role: .cancel) { }
         } message: {
             Text(uploadError ?? "")
         }
     }
 
+    // 썸네일 뷰
+    @ViewBuilder
+    private var avatarView: some View {
+        if let img = selectedImage {
+            Image(uiImage: img)
+                .resizable()
+                .scaledToFill()
+        } else if let url = avatarURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .empty:   ProgressView()
+                case .failure: Image("defaultAvatar").resizable()
+                case .success(let img): img.resizable().scaledToFill()
+                @unknown default: EmptyView()
+                }
+            }
+        } else {
+            Image("defaultAvatar").resizable()
+        }
+    }
+
+    // 업로드 로직
     private func upload(_ image: UIImage) {
         isUploading = true
-        vm.updateProfilePicture(image) { result in
+        vm.updateProfilePicture(image) { res in
             DispatchQueue.main.async {
                 isUploading = false
-                switch result {
-                case .success:
-                    dismiss()
-                case .failure(let err):
-                    uploadError = err.localizedDescription
+                switch res {
+                case .success: dismiss()
+                case .failure(let err): uploadError = err.localizedDescription
                 }
             }
         }
+    }
+}
+
+// 공통 그라디언트 Capsule 버튼
+private struct GradientCapsule: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline.bold())
+            .padding()
+            .background(
+                LinearGradient(colors: [Color("Lavender"), Color("SkyBlue")],
+                               startPoint: .leading, endPoint: .trailing)
+            )
+            .foregroundColor(.white)
+            .clipShape(Capsule())
+            .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }

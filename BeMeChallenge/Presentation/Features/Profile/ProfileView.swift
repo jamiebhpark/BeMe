@@ -1,6 +1,7 @@
 //
-//  ProfileView.swift
+//  Presentation/Features/Profile/ProfileView.swift
 //
+
 import SwiftUI
 
 struct ProfileView: View {
@@ -10,9 +11,9 @@ struct ProfileView: View {
     var body: some View {
         Group {
             switch vm.profileState {
+
             case .idle, .loading:
-                ProgressView()
-                    .frame(maxHeight: .infinity)
+                ProgressView().frame(maxHeight: .infinity)
 
             case .failed(let err):
                 VStack(spacing: 16) {
@@ -22,7 +23,7 @@ struct ProfileView: View {
                 .padding()
 
             case .loaded(let profile):
-                ProfileLoadedContent(
+                LoadedContent(
                     profile: profile,
                     posts: vm.userPosts,
                     streakDays: streakVM.currentStreak,
@@ -33,17 +34,22 @@ struct ProfileView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink { SettingsRootView() } label: {
-                    Image(systemName: "gearshape").font(.title3)
+                NavigationLink {
+                    SettingsRootView()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.title3)
+                        .foregroundColor(Color("TextPrimary"))
                 }
             }
         }
         .onAppear { vm.refresh() }
+        .background(Color("BackgroundPrimary").ignoresSafeArea())
     }
 }
 
-// MARK: - 분리한 Sub-View
-fileprivate struct ProfileLoadedContent: View {
+// MARK: – 프로필 로드 성공 시 메인 컨텐츠
+private struct LoadedContent: View {
     let profile: UserProfile
     let posts:   [Post]
     let streakDays: Int
@@ -56,7 +62,7 @@ fileprivate struct ProfileLoadedContent: View {
         ScrollView {
             VStack(spacing: 20) {
 
-                // ── 헤더
+                // 프로필 헤더
                 ProfileHeaderView(profile: profile) {
                     NavigationLink {
                         ProfileEditView(vm: profileVM)
@@ -68,26 +74,24 @@ fileprivate struct ProfileLoadedContent: View {
                 }
                 .padding(.horizontal)
 
-                // ── Streak
+                // ───── Streak 카드 ─────
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("연속 참여").font(.headline).padding(.horizontal)
-                    StreakView(
-                        totalParticipations: posts.count,
-                        streakDays: streakDays
-                    )
-                    .padding()
+                    SectionHeader(title: "연속 참여")
+
+                    StreakView(totalParticipations: posts.count,
+                               streakDays: streakDays)
+                        .padding(.horizontal)
                 }
                 .cardStyle()
 
-                // ── 내 포스트
+                // ───── 내 포스트 카드 ─────
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("내 포스트").font(.headline).padding(.horizontal)
+                    SectionHeader(title: "내 포스트")
+
                     LazyVGrid(columns: grid, spacing: 4) {
-                        ForEach(posts) { post in          // ✅ Identifiable
+                        ForEach(posts) { post in
                             NavigationLink {
-                                ProfileFeedView(
-                                    profileVM: profileVM,
-                                )
+                                ProfileFeedView(profileVM: profileVM)
                             } label: {
                                 ThumbnailView(url: URL(string: post.imageUrl))
                             }
@@ -103,13 +107,14 @@ fileprivate struct ProfileLoadedContent: View {
     }
 }
 
-// MARK: - 카드 공통 데코레이터
-fileprivate extension View {
+// MARK: – 카드 데코레이터
+private extension View {
+    /// iOS 기본 카드 스타일: 흰(검)배경 + 라운드 + subtle-shadow
     func cardStyle() -> some View {
         self
             .background(Color(.systemBackground))
             .cornerRadius(16)
-            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+            .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
             .padding(.horizontal)
     }
 }

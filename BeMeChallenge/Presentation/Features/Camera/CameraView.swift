@@ -1,12 +1,13 @@
 //
-//  CameraView.swift
+//  Presentation/Features/Camera/CameraView.swift
 //
+
 import SwiftUI
 import AVFoundation
 
 struct CameraView: View {
     let challengeId: String
-    var  onFinish: () -> Void        // 찍고 업로드 끝나면 호출
+    var  onFinish: () -> Void          // 찍고 업로드 끝나면 호출
 
     @StateObject private var cameraVM = CameraViewModel()
     @State private var showPhotoPreview = false
@@ -19,7 +20,7 @@ struct CameraView: View {
             cancelButton
             shutterButton
         }
-        .edgesIgnoringSafeArea(.all)
+        .ignoresSafeArea()
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
 

@@ -1,57 +1,121 @@
-// FeedView.swift
+//
+//  FeedView.swift
+//  BeMeChallenge
+//
+
 import SwiftUI
 
 struct FeedView: View {
 
-    // ── ① props ──────────────────────────────────────────
-    let posts:      [Post]          // 원본
-    let userCache:  [String: User]
+    // ─────────────────────────────────────────────
+    @ObservedObject var vm: ChallengeDetailViewModel
+    let challengeId: String
 
-    var onLike:   (Post) -> Void
-    var onReport: (Post) -> Void
-    var onDelete: (Post) -> Void
+    @State private var displayed: [Post] = []
+    private let bottomThreshold = 3                // 페이징 트리거
 
-    // ── ② local state (하이라이트 재배치용) ───────────────
-    @State private var displayedPosts: [Post] = []
-
-    // ── ③ body ───────────────────────────────────────────
+    // MARK: – View
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 24) {
 
-                /* —— 하이라이트 바 —— */
-                HighlightBarView(posts: displayedPosts) { tapped in
-                    displayedPosts.removeAll { $0.id == tapped.id }
-                    displayedPosts.insert(tapped, at: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 16)
+                    // ── Highlight Bar ──────────────────────────
+                    HighlightBarView(posts: displayed) { tapped in
+                        displayed.removeAll { $0.id == tapped.id }
+                        displayed.insert(tapped, at: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 16)
 
-                /* —— 일반 피드 —— */
-                VStack(spacing: 24) {
-                    ForEach(displayedPosts) { post in
+                    // ── Feed 셀 ───────────────────────────────
+                    ForEach(displayed) { post in
                         PostCellView(
                             post: post,
                             user: author(for: post),
-                            onLike:   { onLike(post) },
-                            onReport: { onReport(post) },
-                            onDelete: { onDelete(post) }
+                            onLike:   { likeOptimistically(post) },
+                            onReport: { vm.report(post) },
+                            onDelete: { vm.deletePost(post) }
                         )
                         .padding(.horizontal, 8)
+                        .onAppear {
+                            if indexOf(post) >= displayed.count - bottomThreshold {
+                                Task { await vm.loadMore(challengeId: challengeId) }
+                            }
+                        }
+                    }
+
+                    if vm.isLoadingMore {
+                        ProgressView().padding(.vertical, 16)
                     }
                 }
+                .padding(.vertical, 20)
             }
-            .padding(.vertical, 20)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
+
+            // ── 동기화 루틴들 ────────────────────────────────
+            .onAppear {
+                displayed = vm.posts
+                prefetchImages(from: vm.posts)
+            }
+            .onChange(of: vm.posts) { posts in
+                displayed = posts
+                prefetchImages(from: posts)
+            }
+            .onReceive(vm.$postsState) { state in
+                if case .loaded = state,
+                   let first = vm.posts.first {
+                    proxy.scrollTo(first.id, anchor: .top)
+                }
+            }
+            .task {
+                if vm.posts.isEmpty {
+                    await vm.loadInitial(challengeId: challengeId)
+                }
+            }
         }
-        // 🔑 최초 / 변경 시 동기화
-        .onAppear            { displayedPosts = posts }
-        .onChange(of: posts) { displayedPosts = $0 }
     }
 
-    // ── helper ────────────────────────────────────────────
+    // MARK: – Optimistic Like ---------------------------------------------
+    private func likeOptimistically(_ post: Post) {
+        guard let idx = displayed.firstIndex(where: { $0.id == post.id }) else { return }
+
+        // 1️⃣ reactions 사본을 수정
+        var newReactions = displayed[idx].reactions
+        let key = "❤️"
+        let cur = newReactions[key, default: 0]
+        newReactions[key] = cur == 0 ? 1 : 0      // 토글
+
+        // 2️⃣ 수정된 딕셔너리로 새 Post 생성
+        let updated = Post(
+            id:           post.id,
+            challengeId:  post.challengeId,
+            userId:       post.userId,
+            imageUrl:     post.imageUrl,
+            createdAt:    post.createdAt,
+            reactions:    newReactions,
+            reported:     post.reported,
+            caption:      post.caption
+        )
+
+        // 3️⃣ 배열 교체 → UI 즉시 반영
+        displayed[idx] = updated
+
+        // 4️⃣ 백엔드 업데이트
+        vm.like(post)
+    }
+
+    // MARK: – Helpers ------------------------------------------------------
     private func author(for post: Post) -> User {
-        userCache[post.userId] ??
-        User(id: post.userId, nickname: "익명")
+        vm.userCache[post.userId] ?? User(id: post.userId, nickname: "익명")
+    }
+
+    private func indexOf(_ post: Post) -> Int {
+        displayed.firstIndex(of: post) ?? 0
+    }
+
+    private func prefetchImages(from posts: [Post]) {
+        let urls = posts.prefix(8).compactMap { URL(string: $0.imageUrl) }
+        ImageCache.prefetch(urls: urls)
     }
 }

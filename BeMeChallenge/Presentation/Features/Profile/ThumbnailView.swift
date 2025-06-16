@@ -1,4 +1,7 @@
-// ThumbnailView.swift
+//
+//  Presentation/Features/Profile/ThumbnailView.swift
+//
+
 import SwiftUI
 
 struct ThumbnailView: View {
@@ -19,5 +22,6 @@ struct ThumbnailView: View {
         }
         .frame(height: 100)
         .clipped()
+        .cornerRadius(4)
     }
 }
