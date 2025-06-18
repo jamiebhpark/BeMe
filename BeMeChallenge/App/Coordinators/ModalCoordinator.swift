@@ -1,35 +1,44 @@
-// App/Coordinators/ModalCoordinator.swift
+//
+//  ModalCoordinator.swift
+//  BeMeChallenge
+//
+
 import SwiftUI
 
 /// 앱 전역 모달·알럿·토스트를 다루는 코디네이터
+@MainActor
 final class ModalCoordinator: ObservableObject {
-    
-    /// 현재 표시해야 할 알럿
-    @Published var modalAlert: ModalAlert? = nil
-    
-    /// 현재 표시해야 할 토스트
-    @Published var toast: ToastItem? = nil
-    
-    // MARK: - Public helpers
-    
-    /// 알럿 표시
+
+    // MARK: – Published states
+    @Published var modalAlert: ModalAlert? = nil      // 전역 알럿
+    @Published var toast:      ToastItem?  = nil      // 전역 토스트
+
+    // MARK: – Alert helpers
     func showAlert(_ alert: ModalAlert) {
         modalAlert = alert
     }
-    
-    /// 토스트 표시
-    func showToast(_ toast: ToastItem) {
-        self.toast = toast
-    }
-    
-    /// 알럿 초기화
     func resetAlert() {
         modalAlert = nil
     }
-    
-    /// 토스트 초기화
+
+    // MARK: – Toast helpers
+    /// 감성적 미니멀 토스트 배너를 표시합니다.
+    /// - Parameters:
+    ///   - toast:  표시할 토스트 모델
+    ///   - duration: 자동 사라짐까지 걸리는 시간 (초). 기본 2.5s
+    func showToast(_ toast: ToastItem, duration: TimeInterval = 2.5) {
+        withAnimation {
+            self.toast = toast
+        }
+        // 일정 시간이 지나면 자동으로 사라짐
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            withAnimation { self?.toast = nil }
+        }
+    }
+
+    /// 수동으로 즉시 토스트를 닫습니다.
     func resetToast() {
-        toast = nil
+        withAnimation { toast = nil }
     }
 }
 
@@ -41,15 +50,14 @@ enum ModalAlert: Identifiable {
 
     var id: String {
         switch self {
-        case .manage(let p):         return "manage-\(p.id)"        // 🔸 ! 삭제
-        case .deleteConfirm(let p):  return "delete-\(p.id)"        // 🔸
-        case .reportConfirm(let p):  return "report-\(p.id)"        // 🔸
+        case .manage(let p):         return "manage-\(p.id)"
+        case .deleteConfirm(let p):  return "delete-\(p.id)"
+        case .reportConfirm(let p):  return "report-\(p.id)"
         }
     }
 }
 
-
-/// 간단한 상단 배너
+/// 간단한 상단 배너용 토스트 모델
 struct ToastItem: Identifiable {
     let id = UUID()
     let message: String

@@ -2,31 +2,31 @@
 /* eslint-disable max-len */
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {onSchedule} from "firebase-functions/v2/scheduler";
-import * as admin from "firebase-admin";
 import {onDocumentCreated} from "firebase-functions/firestore";
+import * as admin from "firebase-admin";
 admin.initializeApp();
 
 /**
  * Cloud Functions for **BeMe Challenge**
- *
- * 1. `participateChallenge` – 챌린지 참여 트랜잭션
- * 2. `createPost`          – 이미지·캡션 포함 새 포스트 업로드 (80자 & 욕설 필터)
+ * ────────────────────────────────────────────────────────────────
+ * 1. participateChallenge      – 챌린지 참여 트랜잭션 (+ participationId 리턴)   ✅ NEW
+ * 2. createPost                – 새 포스트 업로드 (+ participationId 바인딩)     ✅ NEW
+ * 3. cancelParticipation       – 참여 취소 onCall                                 ✅ NEW
+ * 4. purgeUnfinishedParticipations – 5 분마다 미완료 참여 정리                    ✅ NEW
+ * 5. 기타 기존 기능 (purgeOldChallenges, 신고, Push 등)
  */
 
 /* ──────────────────────────────────────────────
- | 1) 챌린지 참여 (기존)
+ | 1) 챌린지 참여
  ────────────────────────────────────────────── */
 export const participateChallenge = onCall(
   {region: "asia-northeast3"},
   async (req) => {
-    /* 1) 인증 */
     const uid = req.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
 
-    /* 2) 파라미터 검증 */
     const {challengeId, type} = req.data as {
-      challengeId: string;
-      type: string;
+      challengeId: string; type: string;
     };
     if (!challengeId || !type) {
       throw new HttpsError("invalid-argument", "잘못된 요청입니다.");
@@ -34,107 +34,129 @@ export const participateChallenge = onCall(
 
     const db = admin.firestore();
 
-    /* 3) “필수” 하루 중복 검사 */
+    // 필수 챌린지 중복 검사 – completed == true 인 것만 체크
     if (type === "필수") {
       const startOfDay = admin.firestore.Timestamp.fromDate(
         new Date(new Date().setHours(0, 0, 0, 0)),
       );
       const dupSnap = await db
-        .collection("users")
-        .doc(uid)
+        .collection("users").doc(uid)
         .collection("participations")
         .where("challengeId", "==", challengeId)
-        .where("date", ">=", startOfDay)
+        .where("createdAt", ">=", startOfDay)
+        .where("completed", "==", true) // ✅ 추가
         .get();
 
       if (!dupSnap.empty) {
-        throw new HttpsError(
-          "failed-precondition",
-          "오늘 이미 참여하셨습니다.",
-        );
+        throw new HttpsError("failed-precondition", "오늘 이미 참여하셨습니다.");
       }
     }
 
-    /* 4) 트랜잭션 */
+    /* 트랜잭션 */
     const chRef = db.collection("challenges").doc(challengeId);
     const partRef = db
-      .collection("users")
-      .doc(uid)
+      .collection("users").doc(uid)
       .collection("participations")
-      .doc();
+      .doc(); // ▶️ 랜덤 ID
 
-    try {
-      await db.runTransaction(async (tx) => {
-        const ch = await tx.get(chRef);
-        if (!ch.exists) {
-          throw new HttpsError("not-found", "챌린지를 찾을 수 없습니다.");
-        }
+    await db.runTransaction(async (tx) => {
+      const ch = await tx.get(chRef);
+      if (!ch.exists) throw new HttpsError("not-found", "챌린지를 찾을 수 없습니다.");
 
-        tx.update(chRef, {
-          participantsCount: admin.firestore.FieldValue.increment(1),
-        });
-        tx.set(partRef, {
-          challengeId,
-          date: admin.firestore.FieldValue.serverTimestamp(),
-        });
+      tx.update(chRef, {
+        participantsCount: admin.firestore.FieldValue.increment(1),
       });
-      return {success: true};
-    } catch (err: unknown) {
-      // Firestore 인덱스 미구현 시 발생하는 오류만 사용자 친화 메시지로 변환
-      const e = err as { code?: number; details?: string };
-      if (e?.code === 9 && (e.details ?? "").includes("requires an index")) {
-        throw new HttpsError(
-          "failed-precondition",
-          "서버 준비 중입니다. 잠시 후 다시 시도해 주세요.",
-        );
-      }
-      throw err;
-    }
+      tx.set(partRef, {
+        challengeId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        completed: false, // ▶️ 미완료 플래그
+      });
+    });
+
+    /* ▶️ 클라이언트에서 필요 - participationId 반환 */
+    return {success: true, participationId: partRef.id}; // ✅ NEW
   },
 );
 
 /* ──────────────────────────────────────────────
- | 2) 새 포스트 업로드 (이미지 URL + 캡션)
+ | 2) 새 포스트 업로드 (이미지 URL + 캡션 + participationId)
  ────────────────────────────────────────────── */
 export const createPost = onCall(
   {region: "asia-northeast3"},
   async (req) => {
-    /* 1) 인증 */
     const uid = req.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
 
-    /* 2) 파라미터 검증 */
-    const {challengeId, imageUrl, caption} = req.data as {
-      challengeId: string;
-      imageUrl: string;
-      caption?: string;
+    const {challengeId, imageUrl, caption, participationId} = req.data as {
+      challengeId: string; imageUrl: string; caption?: string;
+      participationId?: string; // ▶️ optional
     };
 
     if (!challengeId || !imageUrl) {
       throw new HttpsError("invalid-argument", "필수 값 누락");
     }
     if (caption && caption.length > 80) {
-      throw new HttpsError(
-        "invalid-argument",
-        "캡션은 80자 이하만 입력해 주세요.",
-      );
+      throw new HttpsError("invalid-argument", "캡션은 80자 이하만 입력해 주세요.");
     }
     if (caption && containsBadWords(caption)) {
-      throw new HttpsError(
-        "failed-precondition",
-        "부적절한 표현이 포함돼 있습니다.",
-      );
+      throw new HttpsError("failed-precondition", "부적절한 표현이 포함돼 있습니다.");
     }
 
-    /* 3) Firestore 저장 */
-    await admin.firestore().collection("challengePosts").add({
+    const db = admin.firestore();
+
+    /* 1) Post 생성 */
+    await db.collection("challengePosts").add({
       challengeId,
       userId: uid,
       imageUrl,
       caption: caption ?? null,
+      participationId: participationId ?? null, // ✅ NEW
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       reactions: {},
       reported: false,
+    });
+
+    /* 2) 참여 완료 플래그 업데이트 */
+    if (participationId) {
+      const partRef = db.collection("users").doc(uid)
+        .collection("participations").doc(participationId);
+      await partRef.update({completed: true});
+    }
+
+    return {success: true};
+  },
+);
+
+/* ──────────────────────────────────────────────
+ | 3) 참여 취소  (사용자 타이머 만료·수동 취소)
+ ────────────────────────────────────────────── */
+export const cancelParticipation = onCall(
+  {region: "asia-northeast3"},
+  async (req) => {
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const {challengeId, participationId} = req.data as {
+      challengeId: string; participationId: string;
+    };
+    if (!challengeId || !participationId) {
+      throw new HttpsError("invalid-argument", "잘못된 요청입니다.");
+    }
+
+    const db = admin.firestore();
+    const chRef = db.collection("challenges").doc(challengeId);
+    const partRef = db.collection("users").doc(uid)
+      .collection("participations").doc(participationId);
+
+    await db.runTransaction(async (tx) => {
+      const part = await tx.get(partRef);
+      if (!part.exists) return; // 이미 없으면 no-op
+      if (part.get("completed") === true) return; // 완료된 건 touch X
+
+      tx.delete(partRef);
+      tx.update(chRef, {
+        participantsCount: admin.firestore.FieldValue.increment(-1),
+      });
     });
 
     return {success: true};
@@ -142,25 +164,70 @@ export const createPost = onCall(
 );
 
 /* ──────────────────────────────────────────────
- | 3) 욕설 필터 (한글 + 영어 예시 세트)
+ | 4) 5분마다 미완료 참여 정리
  ────────────────────────────────────────────── */
-/* ───────── 바꾼 뒤 ────────── */
+export const purgeUnfinishedParticipations = onSchedule(
+  {
+    region: "asia-northeast3",
+    schedule: "every 5 minutes",
+    timeZone: "Asia/Seoul",
+  },
+  async () => {
+    const db = admin.firestore();
+    const cutoff = admin.firestore.Timestamp.fromMillis(
+      Date.now() - 5 * 60 * 1_000, // 5 분 전
+    );
+
+    // 1) users/*/participations 스캔  ←←★ 수정된 주석
+    const users = await db.collection("users").listDocuments();
+
+    for (const uRef of users) {
+      const partsSnap = await uRef.collection("participations")
+        .where("createdAt", "<=", cutoff)
+        .where("completed", "==", false)
+        .limit(50)
+        .get();
+
+      if (partsSnap.empty) continue;
+
+      const batch = db.batch();
+      for (const p of partsSnap.docs) {
+        const cid = p.get("challengeId") as string | undefined;
+        if (cid) {
+          const chRef = db.collection("challenges").doc(cid);
+          batch.update(chRef, {
+            participantsCount: admin.firestore.FieldValue.increment(-1),
+          });
+        }
+        batch.delete(p.ref);
+      }
+      await batch.commit();
+      console.log(`[purgeUnfinished] uid=${uRef.id} removed=${partsSnap.size}`);
+    }
+  },
+);
+
+/* ──────────────────────────────────────────────
+ | 5) 욕설 필터 util
+ ────────────────────────────────────────────── */
+
 /**
- * 간단 욕설 필터
- * @param  {string}  text  입력 문자열
- * @return {boolean}      금칙어 포함 여부
+ * 텍스트에 금칙어가 포함돼 있는지 여부를 반환한다.
+ *
+ * @param {string} text  검사할 문자열
+ * @return {boolean}     금칙어 포함 시 `true`
  */
 function containsBadWords(text: string): boolean {
-  const badWords: string[] = [
-    // 한글
+  const bad: string[] = [
     "시발", "씨발", "ㅅㅂ", "좆", "존나",
-    // 영어
     "fuck", "shit", "bitch", "asshole", "fucking",
   ];
-
   const lower = text.toLowerCase();
-  return badWords.some((w) => lower.includes(w.toLowerCase()));
+  return bad.some((w) => lower.includes(w));
 }
+
+/* 6) 아래 ↓ 기존 purgeOldChallenges / 신고 / Push 함수들은 그대로 유지 */
+
 /* ──────────────────────────────────────────────
  | 3) 종료 + 7일 경과 챌린지 파기 & 포스트 삭제
  |    크론: 매 1시간

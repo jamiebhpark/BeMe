@@ -1,8 +1,3 @@
-//
-//  Presentation / Features / HomeView.swift
-//  BeMeChallenge
-//
-
 import SwiftUI
 
 struct HomeView: View {
@@ -53,9 +48,15 @@ struct HomeView: View {
             }
         }
         .navigationTitle("챌린지")
-        .background(Color("BackgroundPrimary").ignoresSafeArea())   // 🔑 BG 색상 자산
-        .fullScreenCover(item: $camC.currentChallengeID) { id in
-            CameraView(challengeId: id) { camC.dismiss() }
+        .background(Color("BackgroundPrimary").ignoresSafeArea())
+
+        // ── 카메라 모달 ---------------------------------------------------
+        .fullScreenCover(item: $camC.current) { ctx in
+            CameraView(
+                challengeId:    ctx.challengeId,
+                participationId: ctx.participationId,
+                onFinish:       { camC.dismiss() }
+            )
         }
     }
 }

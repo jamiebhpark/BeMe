@@ -2,39 +2,65 @@
 //  ChallengeService.swift
 //  BeMeChallenge
 //
+
 import Foundation
 import FirebaseFunctions
-import os.log   // ⬅️ 간단 로그
+import os.log
 
-final class ChallengeService: ObservableObject {
+/// Cloud Function 래퍼
+final class ChallengeService {
     static let shared = ChallengeService()
-    private lazy var functions = Functions.functions(region: "asia-northeast3")
+    private let fn = Functions.functions(region: "asia-northeast3")
 
-    /// Cloud Function – 챌린지 참여
-    func participate(challengeId: String,
-                     type: String,
-                     completion: @escaping (Result<Void, Error>) -> Void) {
+    // MARK: – 참여 요청  ▶︎  participationId 반환
+    func participate(
+        challengeId: String,
+        type: String,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        let body: [String: Any] = ["challengeId": challengeId, "type": type]
 
-        let payload: [String: Any] = ["challengeId": challengeId,
-                                      "type": type]   // "필수"/"오픈"
-
-        functions.httpsCallable("participateChallenge").call(payload) { result, error in
-            if let error = error {
-                os_log("❌ participate error: %@", error.localizedDescription)
-                completion(.failure(error))
+        fn.httpsCallable("participateChallenge").call(body) { res, err in
+            // ────────────────────────────────────────────────────── ▼ add
+            if let e = err as NSError? {
+                print("❌ participate error ▶︎ code:", e.code,
+                      "domain:", e.domain,
+                      "msg:", e.localizedDescription)
+                // 필요하다면 e.userInfo 도 출력해 두세요.
+                completion(.failure(e))
                 return
             }
+            // ────────────────────────────────────────────────────── ▲
+
             guard
-                let dict = result?.data as? [String: Any],
-                (dict["success"] as? Bool) == true
+                let dict = res?.data as? [String: Any],
+                (dict["success"] as? Bool) == true,
+                let pid  = dict["participationId"] as? String
             else {
                 completion(.failure(NSError(
                     domain: "App", code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "알 수 없는 오류"]
+                    userInfo: [NSLocalizedDescriptionKey: "서버 응답 오류"]
                 )))
                 return
             }
-            completion(.success(()))
+            completion(.success(pid))
+        }
+    }
+
+
+    // MARK: – 참여 취소 (타임아웃·수동)
+    func cancelParticipation(
+        challengeId: String,
+        participationId: String
+    ) {
+        let body: [String: Any] = [
+            "challengeId":     challengeId,
+            "participationId": participationId
+        ]
+        fn.httpsCallable("cancelParticipation").call(body) { _, err in
+            if let err {
+                os_log("⚠️ cancelParticipation: %@", err.localizedDescription)
+            }
         }
     }
 }

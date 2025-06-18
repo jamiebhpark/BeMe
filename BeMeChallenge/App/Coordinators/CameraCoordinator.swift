@@ -1,18 +1,25 @@
 // App/Coordinators/CameraCoordinator.swift
 import SwiftUI
 
-/// 카메라 전용 코디네이터 (Full-Screen Modal 관리)
+/// 풀-스크린 카메라 모달에 필요한 컨텍스트
+struct CameraContext: Identifiable, Hashable {
+    let id = UUID()
+    let challengeId:    String
+    let participationId: String
+}
+
+/// 카메라 전용 코디네이터
 final class CameraCoordinator: ObservableObject {
-    /// 현재 찍고 있는 챌린지 ID (nil → 모달 닫힘)
-    @Published var currentChallengeID: String? = nil
-    
+
+    /// nil → 모달 닫힘
+    @Published var current: CameraContext? = nil
+
     /// 카메라 모달 열기
-    func presentCamera(for challengeID: String) {
-        currentChallengeID = challengeID
+    func presentCamera(for challengeId: String, participationId: String) {
+        current = CameraContext(challengeId: challengeId,
+                                participationId: participationId)
     }
-    
-    /// 닫기(= 흐름 종료)
-    func dismiss() {
-        currentChallengeID = nil
-    }
+
+    /// 닫기 (= 흐름 종료)
+    func dismiss() { current = nil }
 }

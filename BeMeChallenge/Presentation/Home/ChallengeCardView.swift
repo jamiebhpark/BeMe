@@ -6,6 +6,7 @@
 import SwiftUI
 import Combine
 import FirebaseFunctions
+import FirebaseFirestore
 
 struct ChallengeCardView: View {
     
@@ -37,7 +38,7 @@ struct ChallengeCardView: View {
         if !challenge.isActive { return "종료" }
         let fmt = DateComponentsFormatter()
         fmt.allowedUnits = challenge.remaining < 86_400 ? [.hour, .minute]
-                                                          : [.day,  .hour]
+        : [.day,  .hour]
         fmt.unitsStyle   = .abbreviated
         return fmt.string(from: challenge.remaining) ?? ""
     }
@@ -131,9 +132,9 @@ struct ChallengeCardView: View {
     // MARK: - Badge style helpers
     private var typeBadgeBackground: some View {
         challenge.type == .mandatory ?
-            AnyView(LinearGradient(colors: [Color("Lavender"), Color("SkyBlue")],
-                                   startPoint: .leading, endPoint: .trailing))
-            : AnyView(Color.clear)
+        AnyView(LinearGradient(colors: [Color("Lavender"), Color("SkyBlue")],
+                               startPoint: .leading, endPoint: .trailing))
+        : AnyView(Color.clear)
     }
     private var typeBadgeStroke: some View {
         Capsule()
@@ -149,19 +150,19 @@ struct ChallengeCardView: View {
         isSending = true; showSpinner = true
         
         viewModel.participate(in: challenge)
-            .receive(on: DispatchQueue.main)
             .sink { completion in
                 isSending = false; showSpinner = false
                 if case .failure(let err) = completion {
-                    modalC.showToast(.init(message: err.localizedDescription))
+                    let msg = (err as NSError).code == FirestoreErrorCode.failedPrecondition.rawValue
+                                ? "잠시 후 다시 시도해 주세요"  // 인덱스 빌드 중
+                                : err.localizedDescription
+                    modalC.showToast(.init(message: msg))
                 }
-            } receiveValue: { _ in
-                camC.presentCamera(for: challenge.id)
-            }
-            .store(in: &cancellables)
+            } receiveValue: { pid in
+                camC.presentCamera(for: challenge.id, participationId: pid)
+            }            .store(in: &cancellables)
     }
 }
-
 // 날짜 포맷터
 extension DateFormatter {
     static var shortDate: DateFormatter {
