@@ -72,7 +72,9 @@ struct PushSettingsRow: View {
             }
         }
         // 앱이 포그라운드로 돌아오면 상태 재확인
-        .onChange(of: scenePhase) { ph in if ph == .active { vm.refresh() } }
+        .onChange(of: scenePhase) { _, newPhase in      // oldValue 무시 → "_"
+            if newPhase == .active { vm.refresh() }
+        }
     }
 
     // MARK: – 작은 헬퍼들 ---------------------------------------------------

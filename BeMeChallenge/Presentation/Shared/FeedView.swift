@@ -58,9 +58,9 @@ struct FeedView: View {
                 displayed = vm.posts
                 prefetchImages(from: vm.posts)
             }
-            .onChange(of: vm.posts) { posts in
-                displayed = posts
-                prefetchImages(from: posts)
+            .onChange(of: vm.posts) { _, newPosts in  // oldValue는 필요 없으니 “_” 로 무시
+                displayed = newPosts
+                prefetchImages(from: newPosts)
             }
             .onReceive(vm.$postsState) { state in
                 if case .loaded = state,

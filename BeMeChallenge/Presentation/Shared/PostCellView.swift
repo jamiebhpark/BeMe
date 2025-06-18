@@ -34,8 +34,8 @@ struct PostCellView: View {
         VStack(spacing: 12) {
             header
             imageSection
-            if showActions { actionBar }
-            footer
+            if showActions { actionBar }   // ❤️ + 좋아요 수 한 줄
+            footer                         // 캡션만
         }
         .background(Color("SurfaceSecondary"))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -99,7 +99,7 @@ struct PostCellView: View {
         }
     }
 
-    // MARK: – Action Bar ---------------------------------------------------
+    // MARK: – Action Bar (❤️ 왼쪽 / 좋아요 수 오른쪽) ------------------------
     private var actionBar: some View {
         HStack {
             Button(action: animateLike) {
@@ -107,18 +107,20 @@ struct PostCellView: View {
                     .font(.title2)
                     .foregroundColor(Color("Lavender"))
             }
-            Spacer()
-        }
-        .padding(8)
-    }
 
-    // MARK: – Footer -------------------------------------------------------
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 4) {
+            Spacer()
+
             Text("\(likeCount)명이 좋아합니다")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(Color("Lavender"))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
 
+    // MARK: – Footer (캡션만) ----------------------------------------------
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 4) {
             if let caption = post.caption, !caption.isEmpty {
                 (Text(displayName).bold() + Text(" \(caption)"))
                     .font(.subheadline)
@@ -179,7 +181,7 @@ struct PostCellView: View {
     // MARK: – Alert Builder ------------------------------------------------
     private func buildAlert(for alert: ModalAlert) -> Alert {
         switch alert {
-        case .manage(let p):
+        case .manage:
             return Alert(
                 title: Text("게시물 관리"),
                 primaryButton: .destructive(Text("삭제")) {

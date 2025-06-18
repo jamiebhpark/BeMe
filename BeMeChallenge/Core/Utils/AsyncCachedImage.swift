@@ -25,7 +25,7 @@ struct AsyncCachedImage<Content: View,
                     .task { await load() }
             }
         }
-        .onChange(of: url) { _ in
+        .onChange(of: url) { _, _ in          // ← 두 파라미터 클로저
             phase = .empty
         }
     }

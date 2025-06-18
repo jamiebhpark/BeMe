@@ -9,6 +9,26 @@ import UIKit
 final class PushNotificationManager: NSObject, ObservableObject {
     static let shared = PushNotificationManager()
 
+    // 언제든 호출해서 배지·알림을 싹 비우는 헬퍼
+    static func resetBadge() {
+        let center = UNUserNotificationCenter.current()
+
+        // 1) 이미 도착‧대기 중인 알림 제거
+        center.removeAllDeliveredNotifications()
+        center.removeAllPendingNotificationRequests()
+
+        // 2) 아이콘 배지 숫자 0으로
+        if #available(iOS 17.0, *) {
+            // ✅ 새로운 iOS 17+ API
+            center.setBadgeCount(0) { error in
+                if let error { print("⚠️ badge reset 실패:", error.localizedDescription) }
+            }
+        } else {
+            // ✅ iOS 16 이하 호환
+            UIApplication.shared.applicationIconBadgeNumber = 0
+        }
+    }
+    
     // 권한 요청 + APNs 등록
     func registerForPushNotifications() {
         let center = UNUserNotificationCenter.current()
@@ -17,6 +37,8 @@ final class PushNotificationManager: NSObject, ObservableObject {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, err in
             if let err { print("권한 요청 에러:", err.localizedDescription); return }
             print("푸시 알림 권한 승인:", granted)
+            // ✅ 앱 첫 실행 시 남아 있을 배지를 즉시 제거
+            if granted { Self.resetBadge() }
             if granted { DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() } }
         }
         Messaging.messaging().delegate = self

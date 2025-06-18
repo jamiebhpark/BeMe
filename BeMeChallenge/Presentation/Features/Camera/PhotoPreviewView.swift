@@ -58,10 +58,9 @@ struct PhotoPreviewView: View {
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 24)
                     .disabled(isUploading)
-                    .onChange(of: caption) { new in
-                        caption = String(new.prefix(80))          // 길이 제한
+                    .onChange(of: caption) { _, newValue in        // ✅ iOS 17+ OK
+                        caption = String(newValue.prefix(80))
                     }
-
                 // 2-a) 문자 수
                 HStack {
                     Spacer()

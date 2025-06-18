@@ -64,7 +64,7 @@ struct CameraView: View {
         }
 
         // 사진 촬영 → 미리보기
-        .onChange(of: cameraVM.capturedImage) { _ in
+        .onChange(of: cameraVM.capturedImage) { _, _ in        // oldValue, newValue 무시
             showPhotoPreview = cameraVM.capturedImage != nil
         }
         .fullScreenCover(isPresented: $showPhotoPreview) {

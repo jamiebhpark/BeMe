@@ -2,15 +2,16 @@
 //  CameraViewModel.swift
 //  BeMeChallenge
 //
+//  Main-Actor 안전성 & Swift 6 Sendable 대응 버전
+//
 
-import Foundation
+import SwiftUI
 import AVFoundation
 import FirebaseStorage
 import FirebaseAuth
 import FirebaseFirestore
 import FirebaseFunctions
 import Combine
-import UIKit
 
 @MainActor
 final class CameraViewModel: NSObject, ObservableObject {
@@ -27,51 +28,46 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let db = Firestore.firestore()
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: - Session
+    // MARK: – Session
+    /// 카메라 세션 구성 + 시작 (Swift 6 Main-Actor 호환)
     func configureSession() async throws {
         guard !session.isRunning else { return }
 
         session.beginConfiguration()
         session.sessionPreset = .photo
 
-        guard
-            let device = AVCaptureDevice.default(for: .video)
-        else { throw simpleErr("카메라를 찾을 수 없습니다") }
-
+        guard let device = AVCaptureDevice.default(for: .video) else {
+            throw simpleErr("카메라를 찾을 수 없습니다.")
+        }
         let input = try AVCaptureDeviceInput(device: device)
 
         guard session.canAddInput(input), session.canAddOutput(output) else {
             throw simpleErr("세션 구성 실패")
         }
-
         session.addInput(input)
         session.addOutput(output)
         session.commitConfiguration()
 
-        try await withCheckedThrowingContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
-                self.session.startRunning()
-                cont.resume()
-            }
-        }
+        // ▶︎ Main-Actor 컨텍스트에서 바로 시작 (Sendable 오류 해결)
+        session.startRunning()
     }
 
     func stopSession() { session.stopRunning() }
 
-    // MARK: - Capture
+    // MARK: – Capture
     func capturePhoto() {
         output.capturePhoto(with: .init(), delegate: self)
     }
 }
 
-// MARK: - AVCapturePhotoCaptureDelegate
+// MARK: – AVCapturePhotoCaptureDelegate
 extension CameraViewModel: AVCapturePhotoCaptureDelegate {
     nonisolated func photoOutput(_ output: AVCapturePhotoOutput,
                                  didFinishProcessingPhoto photo: AVCapturePhoto,
                                  error: Error?) {
         guard
             error == nil,
-            let data = photo.fileDataRepresentation(),
+            let data  = photo.fileDataRepresentation(),
             let image = UIImage(data: data)
         else { return }
 
@@ -79,10 +75,10 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
     }
 }
 
-// MARK: - Upload
+// MARK: – Upload
 extension CameraViewModel {
 
-    /// 사진‧캡션 업로드 시작
+    /// 사진·캡션 업로드 시작
     func startUpload(
         forChallenge cid: String,
         caption: String?,
@@ -124,11 +120,11 @@ extension CameraViewModel {
     ) async -> Result<Void, Error> {
 
         guard
-            let uid = Auth.auth().currentUser?.uid,
+            let uid  = Auth.auth().currentUser?.uid,
             let data = image
                 .resized(maxPixel: 1024)
                 .jpegData(compressionQuality: 0.8)
-        else { return .failure(simpleErr("인코딩 실패")) }
+        else { return .failure(simpleErr("이미지 인코딩 실패")) }
 
         let ref = Storage.storage()
             .reference()
@@ -143,10 +139,10 @@ extension CameraViewModel {
             let url = try await ref.downloadURL()
 
             try await addPostViaFunction(
-                challengeId: challengeId,
-                imageURL: url,
-                caption: caption,
-                participationId: participationId
+                challengeId:      challengeId,
+                imageURL:         url,
+                caption:          caption,
+                participationId:  participationId
             )
 
             return .success(())
@@ -158,24 +154,26 @@ extension CameraViewModel {
     /// Cloud Function `createPost` 호출
     private func addPostViaFunction(
         challengeId: String,
-        imageURL: URL,
-        caption: String?,
+        imageURL:    URL,
+        caption:     String?,
         participationId: String?
     ) async throws {
 
         let payload: [String: Any?] = [
-            "challengeId":      challengeId,
-            "imageUrl":         imageURL.absoluteString,
-            "caption":          caption ?? NSNull(),
-            "participationId":  participationId ?? NSNull()
+            "challengeId":     challengeId,
+            "imageUrl":        imageURL.absoluteString,
+            "caption":         caption ?? NSNull(),
+            "participationId": participationId ?? NSNull()
         ]
 
-        try await Functions.functions(region: "asia-northeast3")
+        // 호출 결과를 사용하지 않으므로 무시 표식(_ =) 추가 → 경고 제거
+        _ = try await Functions
+            .functions(region: "asia-northeast3")
             .httpsCallable("createPost")
             .call(payload)
     }
 
-    // MARK: - Helper
+    // MARK: – Helper
     private func simpleErr(_ msg: String) -> NSError {
         NSError(domain: "CameraUpload",
                 code: -1,

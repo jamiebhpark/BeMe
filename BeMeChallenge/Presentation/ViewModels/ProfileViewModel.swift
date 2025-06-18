@@ -61,7 +61,7 @@ final class ProfileViewModel: ObservableObject {
                 }
                 
                 // (A) 문서 없음
-                guard var data = snap?.data() else {
+                guard let data = snap?.data() else {   //  ← var ➜ let
                     self.db.document("users/\(uid)")
                         .setData(["nickname": "익명"], merge: true)
                     return

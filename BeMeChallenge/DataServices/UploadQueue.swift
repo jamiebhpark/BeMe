@@ -125,7 +125,7 @@ final class UploadQueue: ObservableObject {
         let ref = Storage.storage()
             .reference()
             .child("user_uploads/\(item.uid)/\(item.cid)/\(UUID().uuidString).jpg")
-        _ = try await ref.putDataAsync(data)            // ① Storage
+        _ = try await ref.putDataAsync(data, metadata: nil)            // ① Storage
         let url = try await ref.downloadURL()
         
         // ② Cloud Function createPost 호출
@@ -134,9 +134,9 @@ final class UploadQueue: ObservableObject {
             "imageUrl":    url.absoluteString,
             "caption":     item.caption ?? NSNull()
         ]
-        try await Functions.functions(region: "asia-northeast3")
-            .httpsCallable("createPost")
-            .call(payload)
+        _ = try await Functions.functions(region: "asia-northeast3")
+                .httpsCallable("createPost")
+                .call(payload)
     }
     
     // MARK: - Persistence
