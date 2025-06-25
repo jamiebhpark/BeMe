@@ -6,7 +6,7 @@ import SwiftUI
 
 struct ProfileEditView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var vm: ProfileViewModel          // ✨ DI 그대로
+    @ObservedObject var vm: ProfileViewModel          // DI 받은 ViewModel
 
     // 입력값
     @State private var nickname = ""
@@ -17,18 +17,16 @@ struct ProfileEditView: View {
     @State private var isSaving = false
     @State private var alert: AlertItem?
 
-    init(vm: ProfileViewModel) { _vm = StateObject(wrappedValue: vm) }
+    init(vm: ProfileViewModel) { self.vm = vm }
 
-    // ───────────────────────────────────────────────────────── View
+    // ───────────────────────────────────────── View
     var body: some View {
-        VStack {
+        Group {
             switch vm.profileState {
-
-            // 로딩
             case .idle, .loading:
-                ProgressView().frame(maxHeight: .infinity)
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // 실패
             case .failed(let err):
                 VStack(spacing: 16) {
                     Text("로딩 실패: \(err.localizedDescription)")
@@ -37,14 +35,12 @@ struct ProfileEditView: View {
                 }
                 .padding()
 
-            // 성공
-            case .loaded(let profile):
-                editForm(profile)
-        } }
+            case .loaded:
+                formBody                                   // ✅ iOS 기본 Form
+        }
+        }
         .navigationTitle("프로필 편집")
         .navigationBarTitleDisplayMode(.inline)
-
-        // 저장 버튼
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if isSaving {
@@ -56,8 +52,6 @@ struct ProfileEditView: View {
                 }
             }
         }
-
-        // 최초 진입 시 값 세팅
         .onAppear {
             if case .loaded(let p) = vm.profileState {
                 nickname = p.nickname
@@ -65,46 +59,53 @@ struct ProfileEditView: View {
                 location = p.location ?? ""
             }
         }
-
-        // Alert
         .alert(item: $alert) { ai in
-            Alert(title: Text(ai.title), message: Text(ai.message), dismissButton: .default(Text("확인")))
+            Alert(title: Text(ai.title),
+                  message: Text(ai.message),
+                  dismissButton: .default(Text("확인")))
         }
     }
 
-    // ─────────────────────────────────────────────── Form 영역
+    // MARK: - Form
     @ViewBuilder
-    private func editForm(_ prof: UserProfile) -> some View {
+    private var formBody: some View {
         Form {
-            Section(header: Text("닉네임").foregroundColor(Color("TextPrimary"))) {
-                TextField("닉네임", text: $nickname)
+            // ── 닉네임 ─────────────────────────────
+            Section(header: Text("닉네임")) {
+                TextField("닉네임을 입력하세요", text: $nickname)
+                    .textContentType(.nickname)
             }
 
-            Section(header: Text("자기소개").foregroundColor(Color("TextPrimary"))) {
-                TextField("자기소개", text: $bio)
+            // ── 자기소개 ───────────────────────────
+            Section(header: Text("자기소개")) {
+                TextField("한 줄 자기소개", text: $bio)
+                    .textContentType(.name)
             }
 
-            Section(header: Text("위치").foregroundColor(Color("TextPrimary"))) {
-                TextField("위치", text: $location)
+            // ── 위치 ───────────────────────────────
+            Section(header: Text("위치")) {
+                TextField("예: 서울, 강남", text: $location)
+                    .textContentType(.addressCity)
             }
 
+            // ── 사진 변경 ───────────────────────────
             Section {
                 NavigationLink("프로필 사진 변경") {
                     ProfilePictureUpdateView(vm: vm)
                 }
             }
         }
-        .scrollContentBackground(.hidden)          // iOS 16+
-        .background(Color("BackgroundPrimary"))
+        .formStyle(.grouped)                // inset-grouped 스타일 유지
+        .scrollDismissesKeyboard(.interactively)
     }
 
-    // ─────────────────────────────────────────────── 저장 로직
+    // MARK: - 저장
     private func save() {
         isSaving = true
         Task {
             let res = await vm.updateProfile(
                 nickname: nickname,
-                bio: bio.isEmpty ? nil : bio,
+                bio:      bio.isEmpty      ? nil : bio,
                 location: location.isEmpty ? nil : location
             )
             await MainActor.run {
@@ -119,7 +120,6 @@ struct ProfileEditView: View {
     }
 }
 
-// Alert 식별용
 struct AlertItem: Identifiable {
     let id = UUID(); let title: String; let message: String
 }

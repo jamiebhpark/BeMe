@@ -2,7 +2,7 @@
 //  CameraViewModel.swift
 //  BeMeChallenge
 //
-//  Main-Actor 안전성 & Swift 6 Sendable 대응 버전
+//  Swift 6 Strict-Concurrency & Thread Performance Safe 버전
 //
 
 import SwiftUI
@@ -13,54 +13,72 @@ import FirebaseFirestore
 import FirebaseFunctions
 import Combine
 
-@MainActor
+// MARK: - ViewModel -------------------------------------------------------
 final class CameraViewModel: NSObject, ObservableObject {
 
-    // MARK: - Published
+    // ───────── Published ─────────
     @Published var capturedImage: UIImage?
     @Published private(set) var uploadState: LoadableProgress = .idle
 
-    // MARK: - Camera Session
+    // ───────── Camera Session ─────
     let session = AVCaptureSession()
-    private let output = AVCapturePhotoOutput()
+    private let output        = AVCapturePhotoOutput()
+    private let sessionQueue  = DispatchQueue(label: "camera.session")
 
-    // MARK: - Private
+    // ───────── Private ────────────
     private let db = Firestore.firestore()
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: – Session
-    /// 카메라 세션 구성 + 시작 (Swift 6 Main-Actor 호환)
+    // MARK: – Session -----------------------------------------------------
+    /// 카메라 세션 구성 + 시작 (백그라운드 큐에서 실행)
     func configureSession() async throws {
         guard !session.isRunning else { return }
 
-        session.beginConfiguration()
-        session.sessionPreset = .photo
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            sessionQueue.async { [weak self] in
+                guard let self else {
+                    return cont.resume(throwing: self?.simpleErr("deinit") ?? NSError())
+                }
+                do {
+                    self.session.beginConfiguration()
+                    self.session.sessionPreset = .photo
 
-        guard let device = AVCaptureDevice.default(for: .video) else {
-            throw simpleErr("카메라를 찾을 수 없습니다.")
+                    guard let device = AVCaptureDevice.default(for: .video) else {
+                        throw self.simpleErr("카메라를 찾을 수 없습니다.")
+                    }
+                    let input = try AVCaptureDeviceInput(device: device)
+
+                    guard self.session.canAddInput(input),
+                          self.session.canAddOutput(self.output) else {
+                        throw self.simpleErr("세션 구성 실패")
+                    }
+                    self.session.addInput(input)
+                    self.session.addOutput(self.output)
+                    self.session.commitConfiguration()
+
+                    self.session.startRunning()      // ✅ 백그라운드 스레드
+                    cont.resume(returning: ())
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
         }
-        let input = try AVCaptureDeviceInput(device: device)
-
-        guard session.canAddInput(input), session.canAddOutput(output) else {
-            throw simpleErr("세션 구성 실패")
-        }
-        session.addInput(input)
-        session.addOutput(output)
-        session.commitConfiguration()
-
-        // ▶︎ Main-Actor 컨텍스트에서 바로 시작 (Sendable 오류 해결)
-        session.startRunning()
     }
 
-    func stopSession() { session.stopRunning() }
+    /// 세션 중지
+    func stopSession() {
+        sessionQueue.async { [weak self] in
+            self?.session.stopRunning()              // ✅ 백그라운드
+        }
+    }
 
-    // MARK: – Capture
+    // MARK: – Capture -----------------------------------------------------
     func capturePhoto() {
         output.capturePhoto(with: .init(), delegate: self)
     }
 }
 
-// MARK: – AVCapturePhotoCaptureDelegate
+// MARK: - AVCapturePhotoCaptureDelegate ----------------------------------
 extension CameraViewModel: AVCapturePhotoCaptureDelegate {
     nonisolated func photoOutput(_ output: AVCapturePhotoOutput,
                                  didFinishProcessingPhoto photo: AVCapturePhoto,
@@ -75,7 +93,7 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
     }
 }
 
-// MARK: – Upload
+// MARK: - Upload ---------------------------------------------------------
 extension CameraViewModel {
 
     /// 사진·캡션 업로드 시작
@@ -111,7 +129,7 @@ extension CameraViewModel {
         }
     }
 
-    // 실제 업로드 로직
+    /// 실제 업로드 로직
     private func upload(
         image: UIImage,
         challengeId: String,
@@ -166,7 +184,6 @@ extension CameraViewModel {
             "participationId": participationId ?? NSNull()
         ]
 
-        // 호출 결과를 사용하지 않으므로 무시 표식(_ =) 추가 → 경고 제거
         _ = try await Functions
             .functions(region: "asia-northeast3")
             .httpsCallable("createPost")
@@ -174,9 +191,18 @@ extension CameraViewModel {
     }
 
     // MARK: – Helper
-    private func simpleErr(_ msg: String) -> NSError {
-        NSError(domain: "CameraUpload",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: msg])
+    fileprivate func simpleErr(_ msg: String) -> NSError {
+        NSError(
+            domain: "CameraUpload",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: msg]
+        )
     }
 }
+
+// MARK: - Concurrency ----------------------------------------------------
+/**
+ CameraViewModel 은 전용 DispatchQueue (`sessionQueue`) 에서만
+ 비-메인 접근이 일어나므로 데이터 레이스 위험이 없습니다.
+ */
+extension CameraViewModel: @unchecked Sendable {}

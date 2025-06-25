@@ -98,10 +98,11 @@ final class ChallengeViewModel: ObservableObject {
 
         // 오늘 참여 현황 – 완료된 건만 수신
         let startOfDay = Calendar.current.startOfDay(for: Date())
-        participationListener = db.collection("users").document(uid)
-            .collection("participations")
-            .whereField("createdAt", isGreaterThanOrEqualTo: startOfDay)
-            .whereField("completed", isEqualTo: true)  // ✅ 완료 필터
+        participationListener = db
+          .collection("users").document(uid)
+          .collection("participations")
+          .whereField("createdAt", isGreaterThanOrEqualTo: startOfDay)
+          .order(by: "createdAt")                 // ⭐️ 추가
             .addSnapshotListener { [weak self] snap, _ in
                 guard let self else { return }
                 let ids = snap?.documents.compactMap {

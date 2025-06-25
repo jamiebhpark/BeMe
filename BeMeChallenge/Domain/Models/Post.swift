@@ -55,3 +55,12 @@ struct Post: Identifiable, Hashable, Codable {
         self.caption     = caption
     }
 }
+// Post.swift 맨 아래에 편의 메서드 추가
+extension Post {
+    func copy(withReactions r: [String:Int]) -> Post {
+        Post(id: id, challengeId: challengeId, userId: userId,
+             imageUrl: imageUrl, createdAt: createdAt,
+             reactions: r, reported: reported, caption: caption)
+    }
+}
+

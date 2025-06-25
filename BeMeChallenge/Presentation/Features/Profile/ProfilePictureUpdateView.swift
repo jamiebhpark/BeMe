@@ -7,28 +7,28 @@ import SwiftUI
 struct ProfilePictureUpdateView: View {
     @ObservedObject var vm: ProfileViewModel
     @Environment(\.dismiss) private var dismiss
-
+    
     @State private var selectedImage: UIImage?
     @State private var isPickerPresented = false
     @State private var isUploading      = false
     @State private var uploadError:     String?
-
+    
     /// 현재 아바타 URL (캐시-버스터 포함)
     private var avatarURL: URL? {
         guard case .loaded(let prof) = vm.profileState else { return nil }
         return prof.effectiveProfileImageURL
     }
-
+    
     // ────────────────────────────────────────────────── View
     var body: some View {
         VStack(spacing: 28) {
-
+            
             // ① 썸네일
             avatarView
                 .frame(width: 160, height: 160)
                 .clipShape(Circle())
                 .shadow(radius: 6)
-
+            
             // ② 버튼 스택
             VStack(spacing: 16) {
                 // 사진 선택
@@ -39,17 +39,28 @@ struct ProfilePictureUpdateView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(GradientCapsule())
-
+                
                 // 기본 아바타
-                Button {
-                    vm.resetProfilePicture()
-                    dismiss()
+                Button(role: .destructive) {
+                    isUploading = true
+                    Task {
+                        let res = await vm.resetProfilePicture()
+                        await MainActor.run {
+                            isUploading = false
+                            switch res {
+                            case .success: dismiss()
+                            case .failure(let e): uploadError = e.localizedDescription
+                            }
+                        }
+                    }
                 } label: {
-                    Label("기본 아바타로 되돌리기", systemImage: "arrow.uturn.backward")
+                    Label("기본 아바타로 되돌리기",
+                          systemImage: "arrow.uturn.backward")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-
+                .disabled(isUploading)
+                
                 // 업로드
                 Button {
                     guard let img = selectedImage else { return }
@@ -67,7 +78,7 @@ struct ProfilePictureUpdateView: View {
                 .disabled(isUploading || selectedImage == nil)
             }
             .padding(.horizontal)
-
+            
             Spacer()
         }
         .padding()
@@ -83,7 +94,7 @@ struct ProfilePictureUpdateView: View {
             Text(uploadError ?? "")
         }
     }
-
+    
     // 썸네일 뷰
     @ViewBuilder
     private var avatarView: some View {
@@ -104,34 +115,35 @@ struct ProfilePictureUpdateView: View {
             Image("defaultAvatar").resizable()
         }
     }
-
+    
     // 업로드 로직
     private func upload(_ image: UIImage) {
         isUploading = true
-        vm.updateProfilePicture(image) { res in
+        vm.updateProfilePicture(image) { result in
             DispatchQueue.main.async {
                 isUploading = false
-                switch res {
+                switch result {
                 case .success: dismiss()
-                case .failure(let err): uploadError = err.localizedDescription
+                case .failure(let err):
+                    uploadError = err.localizedDescription
                 }
             }
         }
     }
-}
-
-// 공통 그라디언트 Capsule 버튼
-private struct GradientCapsule: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline.bold())
-            .padding()
-            .background(
-                LinearGradient(colors: [Color("Lavender"), Color("SkyBlue")],
-                               startPoint: .leading, endPoint: .trailing)
-            )
-            .foregroundColor(.white)
-            .clipShape(Capsule())
-            .opacity(configuration.isPressed ? 0.85 : 1)
+    
+    // 공통 그라디언트 Capsule 버튼
+    private struct GradientCapsule: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .font(.headline.bold())
+                .padding()
+                .background(
+                    LinearGradient(colors: [Color("Lavender"), Color("SkyBlue")],
+                                   startPoint: .leading, endPoint: .trailing)
+                )
+                .foregroundColor(.white)
+                .clipShape(Capsule())
+                .opacity(configuration.isPressed ? 0.85 : 1)
+        }
     }
 }

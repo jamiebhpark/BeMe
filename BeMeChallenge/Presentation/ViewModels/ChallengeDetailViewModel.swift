@@ -2,6 +2,8 @@
 //  ChallengeDetailViewModel.swift
 //  BeMeChallenge
 //
+//  *v3* – “전체 / 내 게시물” 세그먼트 지원
+//
 
 import Foundation
 import FirebaseFirestore
@@ -11,38 +13,53 @@ import Combine
 @MainActor
 final class ChallengeDetailViewModel: ObservableObject {
 
-    // ─────────────────────── Published ───────────────────────
-    @Published var posts: [Post]              = []          // 피드 데이터
-    @Published var postsState: Loadable<Void> = .idle       // 로딩/에러 표시
-    @Published var isLoadingMore: Bool        = false       // 하단 스피너
-    @Published private(set) var userCache: [String: User] = [:]
+    // ────────────────────────────────────────────────
+    // MARK: - 📤 OUTPUT
+    // ────────────────────────────────────────────────
+    @Published private(set) var posts:       [Post]          = []
+    @Published private(set) var postsState:  Loadable<Void>  = .idle
+    @Published private(set) var isLoadingMore               = false
+    @Published private(set) var userCache:   [String: LiteUser] = [:]
 
-    // ─────────────────────── Private ────────────────────────
-    private let db         = Firestore.firestore()
-    private let pageSize   = 20
-    private var lastDoc: DocumentSnapshot?                 // 페이지 커서
-    private let userRepo: UserRepositoryProtocol = UserRepository()
+    // 현재 선택된 세그먼트
+    @Published var scope: FeedScope = .all {
+        didSet { Task { await loadInitial(challengeId: currentCID) } }
+    }
+
+    // ────────────────────────────────────────────────
+    // MARK: - 🔑 PRIVATE
+    // ────────────────────────────────────────────────
+    private let db = Firestore.firestore()
+    private let pageSize = 20
+
+    private var lastDoc:  DocumentSnapshot?
+    private var currentCID = ""
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: – Init  (로그아웃 시 상태 초기화)
+    private let userRepo: UserRepositoryProtocol = UserRepository()
+
+    // MARK: - Init
     init() {
+        // 로그아웃 시 상태 초기화
         NotificationCenter.default.publisher(for: .didSignOut)
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.resetState() }
-            }
+            .sink { [weak self] _ in Task { @MainActor in self?.resetState() } }
             .store(in: &cancellables)
     }
 
-    // ─────────────────────── Public API ─────────────────────
+    // ────────────────────────────────────────────────
+    // MARK: - PUBLIC API
+    // ────────────────────────────────────────────────
 
-    /// ① 첫 페이지
-    func loadInitial(challengeId: String) async {
+    /// 첫 페이지 로딩
+    func loadInitial(challengeId cid: String) async {
+        currentCID = cid
         resetState()
         postsState = .loading
+
         do {
-            let (list, last) = try await fetchPage(challengeId, after: nil)
-            posts = list
-            lastDoc = last
+            let (list, last) = try await fetchPage(after: nil)
+            posts    = list
+            lastDoc  = last
             postsState = .loaded(())
             prefetchAuthors(from: list)
         } catch {
@@ -50,118 +67,112 @@ final class ChallengeDetailViewModel: ObservableObject {
         }
     }
 
-    /// ② 추가 페이지
-    func loadMore(challengeId: String) async {
+    /// 추가 페이지
+    func loadMore() async {
         guard !isLoadingMore, let lastDoc else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
 
         do {
-            let (list, last) = try await fetchPage(challengeId, after: lastDoc)
+            let (list, last) = try await fetchPage(after: lastDoc)
             posts += list
             self.lastDoc = last
             prefetchAuthors(from: list)
         } catch {
-            print("pagination err:", error.localizedDescription)
+            print("🚨 pagination :", error.localizedDescription)
         }
     }
 
-    /// ③ 좋아요 토글 + Optimistic UI
+    /// ♥️ Optimistic Like
     func like(_ post: Post) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
 
-        // 1) 화면에 *즉시* 반영
-        let key   = "❤️"
-        let liked = post.reactions[key, default: 0] > 0
-        let delta = liked ? -1 : 1
-        applyOptimisticLike(postId: post.id, delta: delta)
+        // 1️⃣  UI 즉시 반영
+        applyDelta(+1, for: post)
 
-        // 2) 트랜잭션 실행
+        // 2️⃣  서버 트랜잭션
         ReactionService.shared.updateReaction(
             forPost: post.id,
-            reactionType: key,
-            userId: uid
-        ) { [weak self] result in
-            if case .failure(let err) = result {
-                print("❤️ 좋아요 실패:", err.localizedDescription)
-                // 3) 실패 시 UI 롤백
-                Task { @MainActor in
-                    self?.applyOptimisticLike(postId: post.id, delta: -delta)
+            reactionType: "❤️",
+            userId: uid) { [weak self] result in
+                if case .failure = result {
+                    // 3️⃣  실패 시 롤백
+                    Task { @MainActor in self?.applyDelta(-1, for: post) }
                 }
+            }
+    }
+
+    func report(_ post: Post) {
+        ReportService.shared.reportPost(postId: post.id) { [weak self] res in
+            if case .success = res {
+                Task { @MainActor in self?.posts.removeAll { $0.id == post.id } }
             }
         }
     }
 
-    /// ④ 신고
-    func report(_ post: Post) {
-        ReportService.shared.reportPost(postId: post.id) { _ in }
-    }
-
-    /// ⑤ 삭제
     func deletePost(_ post: Post) {
         db.collection("challengePosts").document(post.id).delete { [weak self] err in
-            if let err = err {
-                print("delete err:", err.localizedDescription)
-            } else {
+            if err == nil {
                 self?.posts.removeAll { $0.id == post.id }
             }
         }
     }
 
-    // ─────────────────────── Private helpers ─────────────────────
+    // ────────────────────────────────────────────────
+    // MARK: - PRIVATE HELPERS
+    // ────────────────────────────────────────────────
 
-    /// Optimistic Like 적용 / 롤백
-    private func applyOptimisticLike(postId: String, delta: Int) {
-        guard let idx = posts.firstIndex(where: { $0.id == postId }) else { return }
-        var p = posts[idx]
-        var map = p.reactions
-        map["❤️", default: 0] += delta
-        if map["❤️"]! < 0 { map["❤️"] = 0 }          // 음수 방지
-        p = Post(id: p.id,
-                 challengeId: p.challengeId,
-                 userId: p.userId,
-                 imageUrl: p.imageUrl,
-                 createdAt: p.createdAt,
-                 reactions: map,
-                 reported: p.reported,
-                 caption: p.caption)
-        posts[idx] = p
-    }
+    /// Firestore 쿼리 한 페이지
+    private func fetchPage(after doc: DocumentSnapshot?) async throws
+    -> ([Post], DocumentSnapshot?) {
 
-    private func resetState() {
-        posts          = []
-        lastDoc        = nil
-        postsState     = .idle
-        userCache.removeAll()
-    }
-
-    /// 페이지 쿼리
-    private func fetchPage(_ cid: String,
-                           after doc: DocumentSnapshot?) async throws
-        -> ([Post], DocumentSnapshot?)
-    {
-        var q = db.collection("challengePosts")
-            .whereField("challengeId", isEqualTo: cid)
+        // 기본 필터
+        var query = db.collection("challengePosts")
+            .whereField("challengeId", isEqualTo: currentCID)
             .whereField("reported",    isEqualTo: false)
             .order(by: "createdAt", descending: true)
             .limit(to: pageSize)
 
-        if let doc { q = q.start(afterDocument: doc) }
+        // “내 게시물” 스코프
+        if scope == .mine, let uid = Auth.auth().currentUser?.uid {
+            query = query.whereField("userId", isEqualTo: uid)
+        }
 
-        let snap = try await q.getDocuments()
+        if let doc { query = query.start(afterDocument: doc) }
+
+        let snap = try await query.getDocuments()
         let list = snap.documents.compactMap(Post.init)
         return (list, snap.documents.last)
     }
 
-    /// 작성자 캐싱
-    private func prefetchAuthors(from posts: [Post]) {
-        let missing = Set(posts.map { $0.userId }).subtracting(userCache.keys)
+    private func resetState() {
+        posts = []; userCache.removeAll()
+        lastDoc = nil; postsState = .idle
+    }
+
+    /// Like +/− 1 적용
+    private func applyDelta(_ delta: Int, for post: Post) {
+        guard let idx = posts.firstIndex(where: { $0.id == post.id }) else { return }
+        var p = posts[idx]
+        var map = p.reactions
+        map["❤️", default: 0] = max(0, map["❤️", default: 0] + delta)
+        p = p.copy(withReactions: map)
+        posts[idx] = p
+    }
+
+    /// 작성자 정보 프리패치
+    private func prefetchAuthors(from page: [Post]) {
+        let missing = Set(page.map(\.userId)).subtracting(userCache.keys)
         guard !missing.isEmpty else { return }
 
-        userRepo.fetchUsers(withIds: Array(missing)) { [weak self] result in
-            if case .success(let users) = result {
+        userRepo.fetchUsers(withIds: Array(missing)) { [weak self] res in
+            if case .success(let users) = res {
                 for u in users {
-                    if let uid = u.id { self?.userCache[uid] = u }
+                    self?.userCache[u.id] = LiteUser(
+                        id:        u.id,
+                        nickname:  u.nickname,
+                        avatarURL: u.effectiveProfileImageURL
+                    )
                 }
             }
         }
