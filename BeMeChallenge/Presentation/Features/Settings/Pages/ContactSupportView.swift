@@ -80,8 +80,8 @@ struct MailView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> MFMailComposeViewController {
         let vc = MFMailComposeViewController()
-        vc.setToRecipients(["support@bemechallenge.com"])
-        vc.setSubject("[BeMe Challenge] 지원 요청")
+        vc.setToRecipients(["dev.jamiepark@gmail.com"])
+        vc.setSubject("[BeMe] 지원 요청")
         vc.setMessageBody("안녕하세요,\n\n문의 내용을 작성해주세요.", isHTML: false)
         vc.mailComposeDelegate = context.coordinator
         return vc

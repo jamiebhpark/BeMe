@@ -11,6 +11,40 @@ import {DateTime} from "luxon"; // ★ 타임존 안전
 
 admin.initializeApp();
 
+// ───────────────────── 0-A. reserveNickname ─────────────────────
+const RESERVED = ["운영자", "admin", "administrator", "관리자"];
+
+export const reserveNickname = onCall(
+  {region: "asia-northeast3"},
+  async ({auth, data}) => {
+    const uid = auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const raw = String(data.nickname ?? "").trim();
+    if (raw.length === 0 || raw.length > 20) {
+      throw new HttpsError("invalid-argument", "닉네임은 1–20자여야 합니다.");
+    }
+    if (RESERVED.includes(raw)) {
+      throw new HttpsError("already-exists", "사용할 수 없는 닉네임입니다.");
+    }
+
+    const key = raw.toLowerCase(); // 대/소문자 무시
+    const db = admin.firestore();
+    const map = db.collection("nicknames").doc(key);
+    const user= db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      if ((await tx.get(map)).exists) {
+        throw new HttpsError("already-exists", "이미 사용 중인 닉네임입니다.");
+      }
+
+      tx.set(map, {uid, createdAt: admin.firestore.FieldValue.serverTimestamp()});
+      tx.set(user, {nickname: raw}, {merge: true});
+    });
+
+    return {success: true, nickname: raw};
+  }
+);
 /* ──────────────────────────────── Utils ─────────────────────────────── */
 
 /**
@@ -36,58 +70,57 @@ function containsBadWords(text = ""): boolean {
   return rx.test(text);
 }
 
-/* ────────────────────────── 1. participateChallenge ────────────────── */
 export const participateChallenge = onCall(
   {region: "asia-northeast3"},
   async ({auth, data}) => {
+    /* 0) 인증 · 파라미터 */
     const uid = auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인 필요");
 
     const {challengeId, type} = data as { challengeId?: string; type?: string };
     if (!challengeId || !type) {
-      throw new HttpsError("invalid-argument", "challengeId / type 필수");
+      throw new HttpsError("invalid-argument", "challengeId/type 필수");
     }
 
     const db = admin.firestore();
 
-    /* ① 중복 참여 검사 ─ 하루 1회 (필수만) */
+    /* 1) 중복 참여(필수 챌린지) 검사 */
     if (type === "필수") {
       const dup = await db.collection("users").doc(uid)
         .collection("participations")
         .where("challengeId", "==", challengeId)
         .where("createdAt", ">=", startOfKST())
         .limit(1).get();
-      if (!dup.empty) {
-        throw new HttpsError("already-exists", "오늘 이미 참여");
-      }
+      if (!dup.empty) throw new HttpsError("already-exists", "오늘 이미 참여");
     }
 
-    /* ② 트랜잭션 */
+    /* 2) 챌린지 상태 확인 */
     const chRef = db.collection("challenges").doc(challengeId);
+    const chSnap = await chRef.get();
+    if (!chSnap.exists) throw new HttpsError("not-found", "챌린지 없음");
+    if (chSnap.get("endDate")?.toDate() <= new Date()) {
+      throw new HttpsError("failed-precondition", "종료된 챌린지");
+    }
+
+    /* 3) 배치로 참여 문서 + 카운트 증가 */
     const partRef = db.collection("users").doc(uid)
       .collection("participations").doc();
 
-    await db.runTransaction(async (tx) => {
-      const chSnap = await tx.get(chRef);
-      if (!chSnap.exists) {
-        throw new HttpsError("not-found", "챌린지 없음");
-      }
-      if (chSnap.get("endDate")?.toDate() <= new Date()) {
-        throw new HttpsError("failed-precondition", "종료된 챌린지");
-      }
-
-      tx.set(partRef, {
-        userId: uid, challengeId, type,
-        completed: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      const cur = (chSnap.get("participantsCount") as number) || 0;
-      tx.update(chRef, {participantsCount: cur + 1});
+    const batch = db.batch();
+    batch.set(partRef, {
+      userId: uid,
+      challengeId,
+      type,
+      completed: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    batch.update(chRef, {
+      participantsCount: admin.firestore.FieldValue.increment(1),
+    });
+    await batch.commit();
 
     return {success: true, participationId: partRef.id};
-  },
+  }
 );
 
 /* ─────────────────────────── 2. createPost ─────────────────────────── */

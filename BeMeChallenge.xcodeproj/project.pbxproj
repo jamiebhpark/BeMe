@@ -312,6 +312,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BeMeChallenge/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = BeMe;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "BeMe Challenge에서 사진 촬영을 위해 카메라 접근이 필요합니다.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "BeMe Challenge에서 사진 선택을 위해 사진 라이브러리 접근이 필요합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -349,6 +351,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BeMeChallenge/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = BeMe;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "BeMe Challenge에서 사진 촬영을 위해 카메라 접근이 필요합니다.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "BeMe Challenge에서 사진 선택을 위해 사진 라이브러리 접근이 필요합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

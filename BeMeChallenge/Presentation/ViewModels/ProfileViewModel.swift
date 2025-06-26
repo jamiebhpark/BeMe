@@ -7,134 +7,125 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 import FirebaseStorage
+import FirebaseFunctions           // 🔸 Cloud Functions
 import Combine
 import UIKit
 
 // ──────────────────────────────────────────────────────────────
 @MainActor
 final class ProfileViewModel: ObservableObject {
-    
-    // MARK: - Published
+
+    // MARK: – Published
     @Published private(set) var profileState: Loadable<UserProfile> = .idle
-    @Published private(set) var userPosts: [Post] = []
-    
-    // MARK: - Private
-    private let db      = Firestore.firestore()
-    private let storage = Storage.storage()
-    
+    @Published private(set) var userPosts:   [Post]                 = []
+
+    // MARK: – Private
+    private let db        = Firestore.firestore()
+    private let storage   = Storage.storage()
+    private let functions = Functions.functions(region: "asia-northeast3")
+
     private var profileListener: ListenerRegistration?
     private var postsListener:   ListenerRegistration?
     private var cancellables     = Set<AnyCancellable>()
-    
-    // MARK: - Init
+
+    // MARK: – Init --------------------------------------------------------
     init() {
         startListeners()
-        
+
         NotificationCenter.default.publisher(for: .didSignOut)
-            .sink { [weak self] _ in
-                print("🔌 sign-out → stopListeners")
-                self?.stopListeners()
-            }
+            .sink { [weak self] _ in self?.stopListeners() }
             .store(in: &cancellables)
-        
+
         NotificationCenter.default.publisher(for: .didSignIn)
-            .sink { [weak self] _ in
-                print("⚡️ sign-in → startListeners")
-                self?.startListeners()
-            }
+            .sink { [weak self] _ in self?.startListeners() }
             .store(in: &cancellables)
     }
-    
-    // MARK: Listener 관리 ---------------------------------------------------
+
+    // MARK: – Listener 관리 -----------------------------------------------
     private func startListeners() {
         guard let uid = Auth.auth().currentUser?.uid else { return }
-        print("▶️ startListeners for uid:", uid)
-        
-        // ── 프로필 -------------------------------------
+
+        // 프로필
         profileState = .loading
         profileListener = db.document("users/\(uid)")
             .addSnapshotListener { [weak self] snap, err in
                 guard let self else { return }
-                
-                if let err {
-                    print("❌ profileListener error:", err)
-                    self.profileState = .failed(err)
-                    return
+
+                if let err { self.profileState = .failed(err); return }
+
+                guard let snap, let user = User(document: snap) else {
+                    self.profileState = .failed(self.simpleErr("프로필 로드 실패")); return
                 }
-                
-                guard let data = snap?.data() else {
-                    print("ℹ️ user doc missing – create skeleton")
-                    self.db.document("users/\(uid)")
-                        .setData(["nickname": "익명"], merge: true)
-                    return
-                }
-                
-                if data["nickname"] == nil {
-                    print("ℹ️ nickname missing – patch")
-                    self.db.document("users/\(uid)")
-                        .setData(["nickname": "익명"], merge: true)
-                    return
-                }
-                
-                if let user = User(document: snap!) {
-                    self.profileState = .loaded(user)
-                } else {
-                    self.profileState = .failed(self.simpleErr("프로필 디코딩 실패"))
-                }
+                self.profileState = .loaded(user)
             }
-        
-        // ── 내 포스트 ----------------------------------
+
+        // 내 포스트
         postsListener = db.collection("challengePosts")
             .whereField("userId", isEqualTo: uid)
             .order(by: "createdAt", descending: true)
             .addSnapshotListener { [weak self] snap, _ in
                 guard let self, let snap else { return }
-                if snap.metadata.hasPendingWrites { return }   // pending 쓰기 무시
+                if snap.metadata.hasPendingWrites { return }   // pending 무시
                 self.userPosts = snap.documents.compactMap(Post.init(document:))
             }
     }
-    
+
     private func stopListeners() {
-        print("⏹ stopListeners")
         profileListener?.remove(); profileListener = nil
         postsListener?.remove();   postsListener   = nil
         profileState = .idle
         userPosts.removeAll()
     }
-    
+
+    /// 구독 끊었다가 다시 켜서 강제 새로고침
     func refresh() {
-        print("🔄 manual refresh")
         stopListeners()
         startListeners()
     }
-    
-    // MARK: 프로필 정보 업데이트 --------------------------------------------
+
+    // MARK: – 프로필 업데이트 ----------------------------------------------
     func updateProfile(nickname: String,
                        bio: String?,
                        location: String?) async -> Result<Void, Error> {
-        print("🔥 updateProfile: started")
-        
+
         guard let uid = Auth.auth().currentUser?.uid else {
             return .failure(simpleErr("로그인이 필요합니다"))
         }
-        
+
+        // 현재 닉네임과 비교해 바뀌었는지 판단
+        var currentNickname: String?
+        if case .loaded(let p) = profileState { currentNickname = p.nickname }
+
+        // ① 닉네임이 달라졌다면 Cloud Function 검증·예약
+        if nickname != currentNickname {
+            let res = await reserveNickname(nickname)
+            if case .failure(let err) = res { return .failure(err) }
+            // → 함수 내부에서 users/{uid}.nickname 필드까지 반영됨
+        }
+
+        // ② bio / location 만 Firestore patch
         let raw: [String: Any?] = [
-            "nickname": nickname,
             "bio":      bio,
             "location": location
         ]
-        let data = raw.compactMapValues { $0 }
-        
+        let data = raw.compactMapValues { $0 }   // nil 제거
+
         return await withCheckedContinuation { cont in
             db.collection("users").document(uid).updateData(data) { err in
-                if let err {
-                    print("❌ updateProfile error:", err)
-                    cont.resume(returning: .failure(err))
-                } else {
-                    print("✅ updateProfile success")
-                    cont.resume(returning: .success(()))
-                }
+                err == nil ? cont.resume(returning: .success(()))
+                           : cont.resume(returning: .failure(err!))
             }
+        }
+    }
+
+    /// Cloud Function reserveNickname 호출
+    private func reserveNickname(_ name: String) async -> Result<Void, Error> {
+        do {
+            _ = try await functions.httpsCallable("reserveNickname")
+                .call(["nickname": name])
+            return .success(())
+        } catch {
+            return .failure(error)
         }
     }
     
