@@ -5,7 +5,7 @@
 
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {onSchedule} from "firebase-functions/v2/scheduler";
-import {onDocumentCreated} from "firebase-functions/v2/firestore";
+import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
 import {DateTime} from "luxon"; // ★ 타임존 안전
 
@@ -436,4 +436,26 @@ export const sendNewChallengePush = onDocumentCreated(
 
     console.log(`[sendNewChallengePush] ${event.params.cid} sent`);
   },
+);
+/* ───────── 0-B. onChallengeIdeaArchived ────────── */
+/** isArchived 가 true 로 바뀌면 문서를 완전 삭제 */
+export const onChallengeIdeaArchived = onDocumentUpdated(
+  {
+    region: "asia-northeast3",
+    document: "challengeIdeas/{id}",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!after) return;
+
+    // ① isArchived 값이 false → true 로 변경된 경우만
+    if (before?.isArchived === false && after.isArchived === true) {
+      const db = admin.firestore();
+      await db.collection("challengeIdeas")
+        .doc(event.params.id)
+        .delete();
+      console.log(`[IdeaDeleted] ${event.params.id}`);
+    }
+  }
 );
