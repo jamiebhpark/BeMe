@@ -1,0 +1,16 @@
+/* Terms Modal */
+"EULA_TITLE"                    = "약관 동의";
+"EULA_AGREE"                    = "EULA에 동의합니다. (필수)";
+"PRIVACY_AGREE"                 = "개인정보 처리방침에 동의합니다. (필수)";
+"MARKETING_AGREE"               = "광고·마케팅 정보 수신 동의 (선택)";
+"EULA_DOC_BUTTON"               = "보기";
+"TERMS_CONTINUE"                = "동의 및 계속";
+
+/* Onboarding */
+"ONB_START"                     = "시작하기";
+"ONB_GUIDELINE_TITLE"           = "커뮤니티 가이드라인";
+"ONB_GUIDELINE_TOGGLE"          = "위 가이드라인을 모두 읽고 동의합니다.";
+
+/* Toasts */
+"TOAST_UPLOAD_COMPLETE"         = "📤 오프라인 업로드 완료!";
+"TOAST_CONSENT_ERROR"           = "⚠️ 동의 정보 저장 실패\n나중에 다시 시도해 주세요.";

@@ -2,42 +2,37 @@
 //  CameraViewModel.swift
 //  BeMeChallenge
 //
-//  Swift 6 Strict-Concurrency & Thread Performance Safe 버전
-//
 
 import SwiftUI
 import AVFoundation
 import FirebaseStorage
 import FirebaseAuth
-import FirebaseFirestore
 import FirebaseFunctions
-import Combine
 
-// MARK: - ViewModel -------------------------------------------------------
+// MARK: - ViewModel
 final class CameraViewModel: NSObject, ObservableObject {
 
-    // ───────── Published ─────────
+    // Published outputs
     @Published var capturedImage: UIImage?
     @Published private(set) var uploadState: LoadableProgress = .idle
+    @Published var lastUploadedPostId: String?    // 🆕 SafeSearch 리스너용 postId
 
-    // ───────── Camera Session ─────
+    // Camera
     let session = AVCaptureSession()
-    private let output        = AVCapturePhotoOutput()
-    private let sessionQueue  = DispatchQueue(label: "camera.session")
+    private let output       = AVCapturePhotoOutput()
+    private let sessionQueue = DispatchQueue(label: "camera.session")
 
-    // ───────── Private ────────────
-    private let db = Firestore.firestore()
-    private var cancellables = Set<AnyCancellable>()
-
-    // MARK: – Session -----------------------------------------------------
-    /// 카메라 세션 구성 + 시작 (백그라운드 큐에서 실행)
+    // MARK: Session
     func configureSession() async throws {
         guard !session.isRunning else { return }
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             sessionQueue.async { [weak self] in
                 guard let self else {
-                    return cont.resume(throwing: self?.simpleErr("deinit") ?? NSError())
+                    cont.resume(throwing: NSError(domain: "CameraUpload",
+                                                  code: -1,
+                                                  userInfo: [NSLocalizedDescriptionKey: "deinit"]))
+                    return
                 }
                 do {
                     self.session.beginConfiguration()
@@ -55,30 +50,21 @@ final class CameraViewModel: NSObject, ObservableObject {
                     self.session.addInput(input)
                     self.session.addOutput(self.output)
                     self.session.commitConfiguration()
-
-                    self.session.startRunning()      // ✅ 백그라운드 스레드
+                    self.session.startRunning()
                     cont.resume(returning: ())
-                } catch {
-                    cont.resume(throwing: error)
-                }
+                } catch { cont.resume(throwing: error) }
             }
         }
     }
 
-    /// 세션 중지
     func stopSession() {
-        sessionQueue.async { [weak self] in
-            self?.session.stopRunning()              // ✅ 백그라운드
-        }
+        sessionQueue.async { [weak self] in self?.session.stopRunning() }
     }
 
-    // MARK: – Capture -----------------------------------------------------
-    func capturePhoto() {
-        output.capturePhoto(with: .init(), delegate: self)
-    }
+    func capturePhoto() { output.capturePhoto(with: .init(), delegate: self) }
 }
 
-// MARK: - AVCapturePhotoCaptureDelegate ----------------------------------
+// MARK: - AVCapturePhotoCaptureDelegate
 extension CameraViewModel: AVCapturePhotoCaptureDelegate {
     nonisolated func photoOutput(_ output: AVCapturePhotoOutput,
                                  didFinishProcessingPhoto photo: AVCapturePhoto,
@@ -88,15 +74,13 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
             let data  = photo.fileDataRepresentation(),
             let image = UIImage(data: data)
         else { return }
-
         Task { @MainActor in self.capturedImage = image }
     }
 }
 
-// MARK: - Upload ---------------------------------------------------------
+// MARK: - Upload
 extension CameraViewModel {
 
-    /// 사진·캡션 업로드 시작
     func startUpload(
         forChallenge cid: String,
         caption: String?,
@@ -108,14 +92,12 @@ extension CameraViewModel {
 
         Task.detached { [weak self] in
             guard let self else { return }
-
             let result = await self.upload(
                 image: img,
                 challengeId: cid,
                 caption: caption,
                 participationId: participationId
             )
-
             await MainActor.run {
                 switch result {
                 case .success:
@@ -129,7 +111,6 @@ extension CameraViewModel {
         }
     }
 
-    /// 실제 업로드 로직
     private func upload(
         image: UIImage,
         challengeId: String,
@@ -139,70 +120,67 @@ extension CameraViewModel {
 
         guard
             let uid  = Auth.auth().currentUser?.uid,
-            let data = image
-                .resized(maxPixel: 1024)
-                .jpegData(compressionQuality: 0.8)
+            let data = image.resized(maxPixel: 1024).jpegData(compressionQuality: 0.8)
         else { return .failure(simpleErr("이미지 인코딩 실패")) }
+
+        // 🎯 고유 ID (Firestore 문서와 파일 이름을 맞추기 위함)
+        let fileId = UUID().uuidString
 
         let ref = Storage.storage()
             .reference()
-            .child("user_uploads/\(uid)/\(challengeId)/\(UUID().uuidString).jpg")
+            .child("user_uploads/\(uid)/\(challengeId)/\(fileId).jpg")
+
+        let meta = StorageMetadata()
+        meta.contentType = "image/jpeg"
 
         do {
-            let task = ref.putDataAsync(data)
-            for try await progress in task {
-                await MainActor.run { self.uploadState = .running(progress) }
-            }
+            _ = try await ref.putDataAsync(data, metadata: meta)
+            await MainActor.run { self.uploadState = .running(1) }
 
             let url = try await ref.downloadURL()
-
             try await addPostViaFunction(
-                challengeId:      challengeId,
-                imageURL:         url,
-                caption:          caption,
-                participationId:  participationId
+                postId:          fileId,
+                challengeId:     challengeId,
+                imageURL:        url,
+                caption:         caption,
+                participationId: participationId
             )
-
+            // 🆕 Firestore 리스너용 postId 저장
+            await MainActor.run { self.lastUploadedPostId = fileId }
             return .success(())
         } catch {
             return .failure(error)
         }
     }
 
-    /// Cloud Function `createPost` 호출
+    // Cloud Function 호출
     private func addPostViaFunction(
+        postId: String,
         challengeId: String,
-        imageURL:    URL,
-        caption:     String?,
+        imageURL: URL,
+        caption: String?,
         participationId: String?
     ) async throws {
-
         let payload: [String: Any?] = [
+            "postId":          postId,
             "challengeId":     challengeId,
             "imageUrl":        imageURL.absoluteString,
             "caption":         caption ?? NSNull(),
             "participationId": participationId ?? NSNull()
         ]
-
         _ = try await Functions
-            .functions(region: "asia-northeast3")
-            .httpsCallable("createPost")
-            .call(payload)
+                .functions(region: "asia-northeast3")
+                .httpsCallable("createPost")
+                .call(payload)
     }
 
-    // MARK: – Helper
+    // Helper
     fileprivate func simpleErr(_ msg: String) -> NSError {
-        NSError(
-            domain: "CameraUpload",
-            code: -1,
-            userInfo: [NSLocalizedDescriptionKey: msg]
-        )
+        NSError(domain: "CameraUpload",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: msg])
     }
 }
 
-// MARK: - Concurrency ----------------------------------------------------
-/**
- CameraViewModel 은 전용 DispatchQueue (`sessionQueue`) 에서만
- 비-메인 접근이 일어나므로 데이터 레이스 위험이 없습니다.
- */
+// MARK: Concurrency
 extension CameraViewModel: @unchecked Sendable {}

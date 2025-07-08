@@ -2,8 +2,6 @@
 //  AuthService.swift
 //  BeMeChallenge
 //
-//  Firebase Auth 10+ 신규 API & 린트 경고 정리
-//
 
 import Foundation
 import FirebaseAuth
@@ -15,10 +13,10 @@ import SwiftUI
 import FirebaseCore
 import CryptoKit
 
-/// 로그인 · 재인증 · Skeleton 프로필 생성 담당
+/// 로그인·재인증·스켈레톤 프로필 생성 담당
 final class AuthService: NSObject, ObservableObject {
 
-    // MARK: - Singleton
+    // MARK: – Singleton
     static let shared = AuthService()
 
     // =====================================================================
@@ -39,14 +37,14 @@ final class AuthService: NSObject, ObservableObject {
                     withPresenting: presenting, hint: nil, additionalScopes: [])
 
                 guard
-                    let idToken = result.user.idToken?.tokenString,
+                    let idToken   = result.user.idToken?.tokenString,
                     !idToken.isEmpty,
                     !result.user.accessToken.tokenString.isEmpty
-                else { throw self.simpleErr("Google token missing") }
+                else { throw simpleErr("Google token missing") }
 
                 let credential = GoogleAuthProvider.credential(
                     withIDToken:  idToken,
-                    accessToken: result.user.accessToken.tokenString)
+                    accessToken:  result.user.accessToken.tokenString)
 
                 Auth.auth().signIn(with: credential) { [weak self] res, err in
                     guard let self else { return }
@@ -59,8 +57,10 @@ final class AuthService: NSObject, ObservableObject {
                     self.ensureUserDoc(
                         uid: fbUser.uid,
                         defaultNickname: fbUser.displayName ?? "익명"
-                    ) {
-                        PushNotificationManager.shared.syncFcmTokenIfNeeded()
+                    ) { ok in
+                        if ok {
+                            PushNotificationManager.shared.syncFcmTokenIfNeeded()
+                        }
                         completion(.success(User(from: fbUser)))
                     }
                 }
@@ -83,14 +83,13 @@ final class AuthService: NSObject, ObservableObject {
         completion: @escaping (Result<User, Error>) -> Void
     ) {
         guard
-            let nonce = currentNonce,
-            let tokenData = credential.identityToken,
-            let idToken = String(data: tokenData, encoding: .utf8)
+            let nonce      = currentNonce,
+            let tokenData  = credential.identityToken,
+            let idToken    = String(data: tokenData, encoding: .utf8)
         else {
             completion(.failure(simpleErr("Apple ID token missing"))); return
         }
 
-        // 🔄  NEW  API  (deprecated 메서드 교체)
         let firebaseCred = OAuthProvider.credential(
             providerID: .apple,
             idToken:    idToken,
@@ -106,9 +105,13 @@ final class AuthService: NSObject, ObservableObject {
             }
 
             let fallbackName = credential.fullName?.givenName ?? "익명"
-            self.ensureUserDoc(uid: fbUser.uid,
-                               defaultNickname: fallbackName) {
-                PushNotificationManager.shared.syncFcmTokenIfNeeded()
+            self.ensureUserDoc(
+                uid: fbUser.uid,
+                defaultNickname: fallbackName
+            ) { ok in
+                if ok {
+                    PushNotificationManager.shared.syncFcmTokenIfNeeded()
+                }
                 completion(.success(User(from: fbUser)))
             }
         }
@@ -117,28 +120,34 @@ final class AuthService: NSObject, ObservableObject {
     // =====================================================================
     // MARK: Skeleton 프로필 생성
     // =====================================================================
+    /// users/{uid} 문서에 `nickname` 필드가 없으면 기본 닉네임으로 생성
+    /// - Parameter completion: `true` = 성공 / 이미 존재, `false` = 쓰기 실패
     private func ensureUserDoc(
         uid: String,
         defaultNickname: String,
-        completion: @escaping () -> Void
+        completion: @escaping (Bool) -> Void          // ✅ Bool 결과
     ) {
         let ref = Firestore.firestore().collection("users").document(uid)
 
         ref.getDocument { snap, _ in
             if let data = snap?.data(), data["nickname"] != nil {
-                completion(); return            // 이미 닉네임 존재
+                completion(true)                       // 이미 존재
+                return
             }
 
-            let payload: [String: Any] = ["nickname": defaultNickname]   // var → let
-            ref.setData(payload, merge: true) { err in
-                if let err { print("⚠️ ensureUserDoc failed:", err.localizedDescription) }
-                completion()
+            ref.setData(["nickname": defaultNickname], merge: true) { err in
+                if let err {
+                    print("⚠️ ensureUserDoc failed:", err.localizedDescription)
+                    completion(false)
+                } else {
+                    completion(true)
+                }
             }
         }
     }
 
     // =====================================================================
-    // MARK: 재인증 (Google / Apple)
+    // MARK: 재인증 (Google / Apple) – 변경 없음
     // =====================================================================
     func reauthenticateWithGoogle(
         presenting: UIViewController,
@@ -158,11 +167,11 @@ final class AuthService: NSObject, ObservableObject {
                     let idToken = result.user.idToken?.tokenString,
                     !idToken.isEmpty,
                     !result.user.accessToken.tokenString.isEmpty
-                else { throw self.simpleErr("Google token missing") }
+                else { throw simpleErr("Google token missing") }
 
                 let cred = GoogleAuthProvider.credential(
                     withIDToken:  idToken,
-                    accessToken: result.user.accessToken.tokenString
+                    accessToken:  result.user.accessToken.tokenString
                 )
                 completion(.success(cred))
             } catch { completion(.failure(error)) }
@@ -178,12 +187,11 @@ final class AuthService: NSObject, ObservableObject {
         }
         guard
             let tokenData = credential.identityToken,
-            let idToken = String(data: tokenData, encoding: .utf8)
+            let idToken   = String(data: tokenData, encoding: .utf8)
         else {
             completion(.failure(simpleErr("Unable to fetch identity token"))); return
         }
 
-        // 🔄  NEW API
         let cred = OAuthProvider.credential(
             providerID: .apple,
             idToken:    idToken,
@@ -193,7 +201,7 @@ final class AuthService: NSObject, ObservableObject {
     }
 
     // =====================================================================
-    // MARK: Sign Out
+    // MARK: Sign Out – 변경 없음
     // =====================================================================
     func signOut(completion: (Result<Void, Error>) -> Void) {
         do {

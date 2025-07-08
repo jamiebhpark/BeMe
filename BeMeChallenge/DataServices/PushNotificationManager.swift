@@ -1,4 +1,8 @@
-// PushNotificationManager.swift
+//
+//  PushNotificationManager.swift
+//  BeMeChallenge
+//
+
 import Foundation
 import UserNotifications
 import FirebaseMessaging
@@ -7,92 +11,91 @@ import FirebaseFirestore
 import UIKit
 
 final class PushNotificationManager: NSObject, ObservableObject {
+
+    // MARK: – Singleton
     static let shared = PushNotificationManager()
 
-    // 언제든 호출해서 배지·알림을 싹 비우는 헬퍼
+    // MARK: – 배지 & 알림 초기화
     static func resetBadge() {
         let center = UNUserNotificationCenter.current()
-
-        // 1) 이미 도착‧대기 중인 알림 제거
         center.removeAllDeliveredNotifications()
         center.removeAllPendingNotificationRequests()
-
-        // 2) 아이콘 배지 숫자 0으로
         if #available(iOS 17.0, *) {
-            // ✅ 새로운 iOS 17+ API
-            center.setBadgeCount(0) { error in
-                if let error { print("⚠️ badge reset 실패:", error.localizedDescription) }
-            }
+            center.setBadgeCount(0) { _ in }
         } else {
-            // ✅ iOS 16 이하 호환
             UIApplication.shared.applicationIconBadgeNumber = 0
         }
     }
-    
-    // 권한 요청 + APNs 등록
+
+    // MARK: – APNs 권한 요청 & 등록
     func registerForPushNotifications() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, err in
-            if let err { print("권한 요청 에러:", err.localizedDescription); return }
-            print("푸시 알림 권한 승인:", granted)
-            // ✅ 앱 첫 실행 시 남아 있을 배지를 즉시 제거
-            if granted { Self.resetBadge() }
-            if granted { DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() } }
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            if granted {
+                Self.resetBadge()
+                DispatchQueue.main.async {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
         }
         Messaging.messaging().delegate = self
     }
 
-    /// **users/{uid}.fcmToken** 필드 동기화 (Skeleton 생성 이후 호출)
+    // MARK: – FCM 토큰 Firestore에 저장
     func syncFcmTokenIfNeeded() {
         guard
             let uid   = Auth.auth().currentUser?.uid,
             let token = Messaging.messaging().fcmToken
         else { return }
 
-        Firestore.firestore().document("users/\(uid)")
-            .setData(["fcmToken": token], merge: true) { err in
-                if let err {
-                    print("FCM 토큰 업로드 실패:", err.localizedDescription)
-                } else {
-                    print("사용자 토큰 업데이트 성공")
-                }
-            }
+        Firestore.firestore()
+            .document("users/\(uid)")
+            .setData(["fcmToken": token], merge: true)
+    }
+
+    // MARK: – 마케팅 토픽 구독/해제
+    func updateMarketingTopic(_ allow: Bool) {
+        let topic = "marketing-news"
+        if allow {
+            Messaging.messaging().subscribe(toTopic: topic)
+        } else {
+            Messaging.messaging().unsubscribe(fromTopic: topic)
+        }
     }
 }
 
-// MARK: - UNUserNotificationCenterDelegate
+// MARK: – UNUserNotificationCenterDelegate
 extension PushNotificationManager: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completion([.banner, .sound, .badge])
+        completion([.banner, .sound, .badge])  // 포그라운드에서도 기본 알림만
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completion: @escaping () -> Void) {
-        print("알림 응답:", response.notification.request.content.userInfo)
         completion()
     }
 }
 
-// MARK: - MessagingDelegate
+// MARK: – MessagingDelegate
 extension PushNotificationManager: MessagingDelegate {
     func messaging(_ messaging: Messaging,
                    didReceiveRegistrationToken fcmToken: String?) {
-
-        guard let fcmToken else { return }
-        print("업데이트된 FCM 토큰:", fcmToken)
-
-        // (1) Firestore에 저장
+        guard fcmToken != nil else { return }
         syncFcmTokenIfNeeded()
 
-        // (2) 이미 로그인 상태라면 토픽 구독(중복 호출 무해)
-        if Auth.auth().currentUser != nil {
-            Messaging.messaging().subscribe(toTopic: "new-challenge")
+        // ① 레거시 토픽(user-<uid>) 해제
+        if let uid = Auth.auth().currentUser?.uid {
+            Messaging.messaging().unsubscribe(fromTopic: "user-\(uid)")
         }
+        // ② 새 챌린지 토픽만 구독
+        Messaging.messaging().subscribe(toTopic: "new-challenge")
+
+        // ③ allowMarketing에 따라 마케팅 토픽 구독/해제
+        let allow = UserDefaults.standard.bool(forKey: "allowMarketing")
+        updateMarketingTopic(allow)
     }
 }
-

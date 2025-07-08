@@ -83,8 +83,8 @@ struct ProfileEditView: View {
             }
 
             // ── 위치 ───────────────────────────────
-            Section(header: Text("위치")) {
-                TextField("예: 서울, 강남", text: $location)
+            Section(header: Text("위치(선택)")) {
+                TextField("예: 화성, 목성", text: $location)
                     .textContentType(.addressCity)
             }
 

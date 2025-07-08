@@ -11,33 +11,44 @@ import {DateTime} from "luxon"; // ★ 타임존 안전
 
 admin.initializeApp();
 
-// ───────────────────── 0-A. reserveNickname ─────────────────────
-const RESERVED = ["운영자", "admin", "administrator", "관리자"];
+/* ───────────────────── 0-A. reserveNickname (revised) ───────────────────── */
+const RESERVED = ["운영자", "admin", "administrator", "관리자"]
+  .map((w) => w.toLowerCase()); // ← 모두 소문자화해 두기
 
 export const reserveNickname = onCall(
   {region: "asia-northeast3"},
   async ({auth, data}) => {
+    /* 1) 파라미터 검증 --------------------------------------------------- */
     const uid = auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
 
     const raw = String(data.nickname ?? "").trim();
     if (raw.length === 0 || raw.length > 20) {
-      throw new HttpsError("invalid-argument", "닉네임은 1–20자여야 합니다.");
+      throw new HttpsError("invalid-argument", "닉네임은 1‒20자여야 합니다.");
     }
-    if (RESERVED.includes(raw)) {
+    const key = raw.toLowerCase(); // 대/소문자 무시
+    if (RESERVED.includes(key)) {
       throw new HttpsError("already-exists", "사용할 수 없는 닉네임입니다.");
     }
 
-    const key = raw.toLowerCase(); // 대/소문자 무시
+    /* 2) 트랜잭션 -------------------------------------------------------- */
     const db = admin.firestore();
-    const map = db.collection("nicknames").doc(key);
-    const user= db.collection("users").doc(uid);
+    const map = db.collection("nicknames").doc(key); // 신규 매핑
+    const user = db.collection("users").doc(uid); // 내 프로필
 
     await db.runTransaction(async (tx) => {
+      /* (A) 새 닉네임 중복 검사 */
       if ((await tx.get(map)).exists) {
         throw new HttpsError("already-exists", "이미 사용 중인 닉네임입니다.");
       }
 
+      /* (B) 이전 닉네임 매핑이 있으면 제거 (재사용 가능) */
+      const prev = (await tx.get(user)).get("nickname");
+      if (prev && prev.toLowerCase() !== key) {
+        tx.delete(db.collection("nicknames").doc(prev.toLowerCase()));
+      }
+
+      /* (C) 매핑 테이블 & 프로필 동시 갱신 */
       tx.set(map, {uid, createdAt: admin.firestore.FieldValue.serverTimestamp()});
       tx.set(user, {nickname: raw}, {merge: true});
     });
@@ -45,6 +56,7 @@ export const reserveNickname = onCall(
     return {success: true, nickname: raw};
   }
 );
+
 /* ──────────────────────────────── Utils ─────────────────────────────── */
 
 /**
@@ -123,16 +135,28 @@ export const participateChallenge = onCall(
   }
 );
 
-/* ─────────────────────────── 2. createPost ─────────────────────────── */
+/* ─────────────────────────── 2. createPost (patched) ─────────────────────────── */
 export const createPost = onCall(
   {region: "asia-northeast3"},
   async ({auth, data}) => {
     const uid = auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
 
-    const {challengeId, imageUrl, caption, participationId} = data as {
-      challengeId?: string; imageUrl?: string; caption?: string; participationId?: string;
+    const {
+      postId, // ★ 새 파라미터 (선택)
+      challengeId,
+      imageUrl,
+      caption,
+      participationId,
+    } = data as {
+      postId?: string;
+      challengeId?: string;
+      imageUrl?: string;
+      caption?: string;
+      participationId?: string;
     };
+
+    /* ── 파라미터 검증 ─────────────────────────────────────── */
     if (!challengeId || !imageUrl) {
       throw new HttpsError("invalid-argument", "필수 값 누락");
     }
@@ -143,25 +167,40 @@ export const createPost = onCall(
       throw new HttpsError("failed-precondition", "부적절한 표현");
     }
 
+    /* ── Firestore 작성 ──────────────────────────────────── */
     const db = admin.firestore();
-    await db.collection("challengePosts").add({
+
+    // ① 문서 참조 (postId 있으면 고정 ID, 없으면 자동 ID)
+    const posts = db.collection("challengePosts");
+    const docRef = postId ? posts.doc(postId) : posts.doc();
+
+    // ② 이미 존재하면 덮어쓰기 방지
+    if ((await docRef.get()).exists) {
+      throw new HttpsError("already-exists", "동일 ID 문서가 이미 존재합니다.");
+    }
+
+    await docRef.set({
       challengeId,
       userId: uid,
       imageUrl,
       caption: caption ?? null,
       participationId: participationId ?? null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      reactions: {}, reported: false,
+      reactions: {},
+      reported: false,
+      // ❌ rejected 필드는 넣지 않는다 (SafeSearch가 이후 추가)
     });
 
+    /* ── participation 완료 체크 ───────────────────────── */
     if (participationId) {
-      await db.collection("users").doc(uid)
+      await db
+        .collection("users").doc(uid)
         .collection("participations").doc(participationId)
         .update({completed: true});
     }
 
-    return {success: true};
-  },
+    return {success: true, postId: docRef.id};
+  }
 );
 
 /* ───────────────────────── 3. cancelParticipation ──────────────────── */
@@ -459,3 +498,6 @@ export const onChallengeIdeaArchived = onDocumentUpdated(
     }
   }
 );
+export {safeSearchScan} from "./safeSearchScan";
+export {safeSearchOnPostCreated} from "./safeSearchOnPostCreated";
+

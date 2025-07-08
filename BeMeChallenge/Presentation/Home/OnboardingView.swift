@@ -1,9 +1,10 @@
 //
 //  Presentation/Home/OnboardingView.swift
 //
+
 import SwiftUI
 
-// MARK: - 데이터 모델
+/* ───────── 데이터 모델 ───────── */
 struct OnboardingPage: Identifiable {
     var id = UUID()
     var imageName: String
@@ -11,14 +12,18 @@ struct OnboardingPage: Identifiable {
     var description: String
 }
 
-// MARK: - 온보딩 메인
+/* ───────── 온보딩 메인 ───────── */
 struct OnboardingView: View {
 
-    // ───────── 상태 ─────────
+    // Local state
     @State private var currentPage = 0
-    @State private var agreed      = false   // 가이드라인 동의
+    @State private var agreed      = false        // 가이드라인 동의
 
-    // ───────── 인트로 페이지 ─────────
+    // Persistent flags
+    @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
+    @AppStorage("agreedGuideline")   private var agreedGuideline   = false
+
+    // Intro pages
     private let introPages: [OnboardingPage] = [
         .init(imageName: "onboarding1", title: "진정성 있는 순간",
               description: "광고 없는 순수한 일상을 공유합니다."),
@@ -29,17 +34,18 @@ struct OnboardingView: View {
     ]
     private var pageCount: Int { introPages.count + 1 }
 
-    // 버튼 그라데이션
+    // Gradient
     private var buttonGradient: LinearGradient {
         LinearGradient(colors: [Color("PrimaryGradientStart"),
                                 Color("PrimaryGradientEnd")],
                        startPoint: .leading, endPoint: .trailing)
     }
 
-    // ───────── 본문 ─────────
+    /* ───────── 본문 ───────── */
     var body: some View {
         ZStack(alignment: .bottom) {
-            // ① 인트로 & 가이드라인 페이지
+
+            // ① 인트로 + 가이드라인
             TabView(selection: $currentPage) {
                 ForEach(introPages.indices, id: \.self) { idx in
                     OnboardingIntroPage(page: introPages[idx])
@@ -51,7 +57,7 @@ struct OnboardingView: View {
             .tabViewStyle(.page(indexDisplayMode: .always))
             .ignoresSafeArea()
 
-            // ② “시작하기” 버튼 (가이드라인 페이지에서만)
+            // ② “시작하기” 버튼 (마지막 페이지)
             if currentPage == pageCount - 1 {
                 Button(action: completeOnboarding) {
                     Text("시작하기")
@@ -64,24 +70,24 @@ struct OnboardingView: View {
                 .background(
                     (agreed ? AnyView(buttonGradient)
                             : AnyView(Color.gray.opacity(0.3)))
-                    .ignoresSafeArea(edges: .bottom)   // 하단 흰띠 제거
+                    .ignoresSafeArea(edges: .bottom)
                 )
             }
         }
-        .onAppear(perform: redirectIfNeeded)
+        .onAppear { redirectIfNeeded() }
     }
 
-    // MARK: - 온보딩 완료 처리
+    /* ───────── 온보딩 완료 ───────── */
     private func completeOnboarding() {
         guard agreed else { return }
-        UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
-        UserDefaults.standard.set(true, forKey: "agreedGuideline")
-        // TODO: 코디네이터 / AppState 등을 통해 홈 화면 전환
+        hasSeenOnboarding = true
+        agreedGuideline   = true
     }
 
     private func redirectIfNeeded() {
-        if UserDefaults.standard.bool(forKey: "hasSeenOnboarding"),
-           UserDefaults.standard.bool(forKey: "agreedGuideline") {
+        if hasSeenOnboarding && agreedGuideline {
+            currentPage = pageCount - 1        // 마지막 페이지로 강제 이동
+            agreed = true
             completeOnboarding()
         }
     }

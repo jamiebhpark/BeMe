@@ -8,11 +8,10 @@ import BackgroundTasks
 import FirebaseAuth
 import FirebaseStorage
 import FirebaseFunctions
-import UIKit                  // ✅ Notification.Name 정의용
+import UIKit
 
 // MARK: - 완료 브로드캐스트용 Notification
 extension Notification.Name {
-    /// 모든 PendingUpload 처리가 끝났을 때(성공·포기 포함) 발송
     static let uploadQueueDidFlush = Notification.Name("uploadQueueDidFlush")
 }
 
@@ -21,128 +20,126 @@ struct PendingUpload: Codable, Identifiable {
     let id: String
     let uid: String
     let cid: String
-    let imgPath: String      // 앱 sandbox 내 이미지 파일 경로
+    let imgPath: String          // 앱 sandbox 내 이미지 파일
     let caption: String?
-    var retry: Int
-    
+    var retry: Int = 0
+
     init(uid: String, cid: String, imgPath: String, caption: String?) {
-        self.id = UUID().uuidString
-        self.uid = uid
-        self.cid = cid
+        self.id      = UUID().uuidString
+        self.uid     = uid
+        self.cid     = cid
         self.imgPath = imgPath
         self.caption = caption
-        self.retry = 0
     }
 }
 
-/// 싱글톤 큐 매니저
+// MARK: - 싱글톤 큐
 @MainActor
 final class UploadQueue: ObservableObject {
     static let shared = UploadQueue()
-    
+
     @Published private(set) var items: [PendingUpload] = []
     private let storeKey = "PendingUploads"
     private let maxRetry = 5
-    
+
     private init() {
         load()
         registerBGTask()
     }
-    
-    // MARK: - Public API
-    /// 업로드 실패 항목을 큐에 저장
+
+    // MARK: - Public
     func enqueue(uid: String, cid: String, image: UIImage, caption: String?) {
         guard let data = image.pngData() else { return }
         let tmpURL = FileManager.default
             .urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("\(UUID().uuidString).png")
         try? data.write(to: tmpURL)
-        
-        let item = PendingUpload(uid: uid, cid: cid, imgPath: tmpURL.path, caption: caption)
-        items.append(item);  save()
+
+        items.append(PendingUpload(uid: uid, cid: cid, imgPath: tmpURL.path, caption: caption))
+        save()
         scheduleBGTask()
     }
-    
-    /// 디버그용 수동 재시도
-    func retryNow() {
-        Task.detached { await self.processQueue() }
-    }
-    
+    func retryNow() { Task.detached { await self.processQueue() } }
+
     // MARK: - BG Task
     private func registerBGTask() {
-        BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: BGIdentifiers.uploadRetry,
-            using: nil
-        ) { [weak self] task in
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: BGIdentifiers.uploadRetry, using: nil) { [weak self] task in
             Task.detached {
-                await self?.processQueue()             // ① 백그라운드에서 재시도
+                await self?.processQueue()
                 task.setTaskCompleted(success: true)
-                await MainActor.run { self?.scheduleBGTask() } // ② 남은 항목 있으면 재예약
+                await MainActor.run { self?.scheduleBGTask() }
             }
         }
     }
-    
     private func scheduleBGTask() {
         guard !items.isEmpty else { return }
         let req = BGAppRefreshTaskRequest(identifier: BGIdentifiers.uploadRetry)
-        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15분 후
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(req)
     }
-    
-    // MARK: - Core Logic
+
+    // MARK: - Core
     private func processQueue() async {
         guard !items.isEmpty else { return }
         print("🔄 UploadQueue retry started, count:", items.count)
-        
-        var succeeded: [String] = []
+
+        var done: [String] = []
+
         for var item in items {
             guard let img = UIImage(contentsOfFile: item.imgPath) else { continue }
             do {
                 try await upload(item: item, image: img)
-                succeeded.append(item.id)
+                done.append(item.id)
                 try? FileManager.default.removeItem(atPath: item.imgPath)
             } catch {
                 print("upload retry err:", error.localizedDescription)
                 item.retry += 1
-                if item.retry >= maxRetry { succeeded.append(item.id) } // give-up
+                if item.retry >= maxRetry { done.append(item.id) }
             }
         }
-        
-        items.removeAll { succeeded.contains($0.id) }
+        items.removeAll { done.contains($0.id) }
         save()
-        
-        // 모든 대기 항목이 사라졌다면 → Notification 발송
-        await MainActor.run {
-            if items.isEmpty {
-                NotificationCenter.default.post(name: .uploadQueueDidFlush, object: nil)
-            }
+
+        if items.isEmpty {
+            NotificationCenter.default.post(name: .uploadQueueDidFlush, object: nil)
         }
     }
-    
+
     // MARK: - 실제 업로드
     private func upload(item: PendingUpload, image: UIImage) async throws {
         guard let data = image.jpegData(compressionQuality: 0.8) else { throw NSError() }
+
+        let fileId = UUID().uuidString
         let ref = Storage.storage()
             .reference()
-            .child("user_uploads/\(item.uid)/\(item.cid)/\(UUID().uuidString).jpg")
-        _ = try await ref.putDataAsync(data, metadata: nil)            // ① Storage
+            .child("user_uploads/\(item.uid)/\(item.cid)/\(fileId).jpg")
+
+        let meta = StorageMetadata()
+        meta.contentType = "image/jpeg"
+
+        // ① Storage 업로드 (경고 → _ 로 무시)
+        _ = try await ref.putDataAsync(data, metadata: meta)
+
+        // ② URL
         let url = try await ref.downloadURL()
-        
-        // ② Cloud Function createPost 호출
+
+        // ③ Cloud Function 호출 (경고 → _ 로 무시)
         let payload: [String: Any?] = [
-            "challengeId": item.cid,
-            "imageUrl":    url.absoluteString,
-            "caption":     item.caption ?? NSNull()
+            "postId":        fileId,
+            "challengeId":   item.cid,
+            "imageUrl":      url.absoluteString,
+            "caption":       item.caption ?? NSNull()
         ]
         _ = try await Functions.functions(region: "asia-northeast3")
                 .httpsCallable("createPost")
                 .call(payload)
     }
-    
+
     // MARK: - Persistence
     private func save() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
-        UserDefaults.standard.set(data, forKey: storeKey)
+        if let data = try? JSONEncoder().encode(items) {
+            UserDefaults.standard.set(data, forKey: storeKey)
+        }
     }
     private func load() {
         guard

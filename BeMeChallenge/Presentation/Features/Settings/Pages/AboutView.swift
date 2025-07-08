@@ -46,15 +46,23 @@ struct AboutView: View {
             // ── 개인정보 처리방침 ──────────────────────────
             Section(header: Text("개인정보 처리방침").foregroundColor(Color("TextPrimary"))) {
                 Text("""
-                     사용자의 개인정보는 Firebase를 통해 안전하게 보호되며, \
-                     제3자와 공유되지 않습니다.
+                     • 앱은 사용자의 이메일, 닉네임, 프로필 사진을 수집하며 \
+                       이는 사용자 식별과 서비스 제공에만 사용됩니다.
+
+                     • 수집된 정보는 Firebase 인프라에 안전하게 저장되며 \
+                       제3자와 공유되지 않습니다.
+                     
+                     • 챌린지 종료 후 +7일 후에 개인정보 보호를 위해 \
+                       일괄적으로 앱 및 서버에서 삭제됩니다.
+
+                     • 사용자는 언제든지 계정 삭제를 통해 개인정보 삭제를 요청할 수 있습니다.
                      """)
                     .font(.body)
                     .lineSpacing(4)
                     .padding(.vertical, 4)
 
                 Button("개인정보 처리방침 보기") {
-                    if let url = URL(string: "https://bemechallenge.com/privacy") {
+                    if let url = URL(string: "https://quilt-cover-7b9.notion.site/beme-app-privacy-policy") {
                         UIApplication.shared.open(url)
                     }
                 }

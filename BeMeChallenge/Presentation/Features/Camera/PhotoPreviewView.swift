@@ -4,21 +4,23 @@
 //
 
 import SwiftUI
+import FirebaseFirestore
 
 struct PhotoPreviewView: View {
     // MARK: – Inputs
     @ObservedObject var cameraVM: CameraViewModel
     let challengeId:     String
-    let participationId: String      // 🆕
+    let participationId: String
     let onUploadSuccess: () -> Void
 
     // MARK: – Environment
-    @Environment(\.dismiss)         private var dismiss
-    @EnvironmentObject              private var modalC: ModalCoordinator
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var modalC: ModalCoordinator
 
     // MARK: – Local state
     @State private var previewImage: UIImage?
     @State private var caption: String = ""
+    @State private var listener: ListenerRegistration?
 
     /// 업로드 진행 중?
     private var isUploading: Bool {
@@ -26,16 +28,12 @@ struct PhotoPreviewView: View {
         return false
     }
 
-    // ───────────────────────────────────────────── UI
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
-
-                // 0) 타이틀
                 TitleText(text: "사진 업로드")
                     .padding(.top, 8)
 
-                // 1) 이미지 미리보기
                 if let img = previewImage {
                     Image(uiImage: img)
                         .resizable()
@@ -50,7 +48,6 @@ struct PhotoPreviewView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // 2) 캡션 입력
                 TextField("사진 설명(선택, 80자 이내)",
                           text: $caption,
                           axis: .vertical)
@@ -58,10 +55,10 @@ struct PhotoPreviewView: View {
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 24)
                     .disabled(isUploading)
-                    .onChange(of: caption) { _, newValue in        // ✅ iOS 17+ OK
+                    .onChange(of: caption) { _, newValue in
                         caption = String(newValue.prefix(80))
                     }
-                // 2-a) 문자 수
+
                 HStack {
                     Spacer()
                     Text("\(caption.count)/80")
@@ -70,7 +67,6 @@ struct PhotoPreviewView: View {
                         .padding(.trailing, 28)
                 }
 
-                // 3) 업로드 진행률
                 if case .running(let pct) = cameraVM.uploadState {
                     ProgressView(value: pct)
                         .progressViewStyle(.linear)
@@ -79,7 +75,6 @@ struct PhotoPreviewView: View {
 
                 Spacer()
 
-                // 4) 버튼 영역
                 HStack(spacing: 16) {
                     retryButton
                     uploadButton
@@ -87,18 +82,28 @@ struct PhotoPreviewView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 32)
             }
-            // 네비게이션 바 ‘취소’ → 동일 취소 로직 재사용
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("취소") { cancelAndRollback() }
                 }
             }
-            .onAppear { previewImage = cameraVM.capturedImage }
+            .onAppear {
+                previewImage = cameraVM.capturedImage
+            }
+            // 업로드 성공 시 리스너 시작
+            .onReceive(cameraVM.$uploadState) { state in
+                if case .succeeded = state,
+                   let postId = cameraVM.lastUploadedPostId {
+                    startListeningRejection(postId: postId)
+                }
+            }
+            .onDisappear {
+                listener?.remove()
+            }
         }
     }
 
     // MARK: – Buttons
-    /// “다시 찍기” → participation 취소 & 뷰 닫기
     private var retryButton: some View {
         Button { cancelAndRollback() } label: {
             Text("다시 찍기")
@@ -109,14 +114,12 @@ struct PhotoPreviewView: View {
                 .clipShape(Capsule())
         }
     }
-
-    /// “지금 올리기”
     private var uploadButton: some View {
         Button { startUpload() } label: {
             Group {
                 switch cameraVM.uploadState {
                 case .running:
-                    EmptyView()          // 상단 ProgressView로 충분
+                    EmptyView()
                 case .succeeded:
                     Image(systemName: "checkmark")
                         .font(.title3).bold()
@@ -152,10 +155,7 @@ struct PhotoPreviewView: View {
             participationId: participationId
         ) { success in
             DispatchQueue.main.async {
-                if success {
-                    modalC.showToast(ToastItem(message: "업로드 완료"))
-                    onUploadSuccess()
-                } else {
+                if !success {
                     let msg: String
                     if case .failed(let err) = cameraVM.uploadState {
                         msg = err.localizedDescription
@@ -163,31 +163,47 @@ struct PhotoPreviewView: View {
                         msg = "업로드 실패"
                     }
                     modalC.showToast(ToastItem(message: msg))
+                    dismiss()
                 }
+                // 성공 시에는 최종 피드백만 리스너가 처리합니다.
             }
         }
     }
 
+    // MARK: – Firestore 리스너
+    private func startListeningRejection(postId: String) {
+        listener = Firestore.firestore()
+            .collection("challengePosts")
+            .document(postId)
+            .addSnapshotListener { snap, err in
+                guard let data = snap?.data(), err == nil,
+                      let rejected = data["rejected"] as? Bool
+                else { return }
+
+                let msg = rejected
+                    ? "⛔️ 부적절한 이미지가 차단되었습니다"
+                    : "✅ 업로드가 성공적으로 처리되었습니다"
+
+                modalC.showToast(ToastItem(message: msg))
+                listener?.remove()
+                dismiss()
+                onUploadSuccess()
+            }
+    }
+
     // MARK: – 공통 취소 처리
-    /// 타임아웃·취소 버튼·다시 찍기 모두 이 로직 사용
     private func cancelAndRollback() {
-        // 1) 버튼 잠금 해제
         NotificationCenter.default.post(
             name: .challengeTimeout,
             object: nil,
             userInfo: ["cid": challengeId]
         )
-
-        // 2) 서버 participation 취소
         ChallengeService.shared.cancelParticipation(
             challengeId:     challengeId,
             participationId: participationId
         )
-
-        // 3) 상태 초기화 & dismiss
         cameraVM.capturedImage = nil
         dismiss()
-        
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             modalC.showToast(ToastItem(message: "촬영을 취소했어요"))
         }
