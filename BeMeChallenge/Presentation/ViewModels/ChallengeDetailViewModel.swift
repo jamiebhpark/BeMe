@@ -2,13 +2,16 @@
 //  ChallengeDetailViewModel.swift
 //  BeMeChallenge
 //
-//  v4 – Safe-Search ‘rejected’ 필드 반영
+//  v5 – Safe-Search ‘rejected’ 필드 및 차단 사용자 필터링 반영
 //
 
 import Foundation
 import FirebaseFirestore
 import FirebaseAuth
 import Combine
+
+// BlockManager.swift 에 구현된 차단 사용자 목록 API
+// 예: BlockManager.shared.blockedUserIds -> Set<String>
 
 @MainActor
 final class ChallengeDetailViewModel: ObservableObject {
@@ -36,6 +39,7 @@ final class ChallengeDetailViewModel: ObservableObject {
 
     // MARK: Init
     init() {
+        // 로그인 해제 시 상태 초기화
         NotificationCenter.default.publisher(for: .didSignOut)
             .sink { [weak self] _ in Task { @MainActor in self?.resetState() } }
             .store(in: &cancellables)
@@ -53,7 +57,9 @@ final class ChallengeDetailViewModel: ObservableObject {
             lastDoc   = last
             postsState = .loaded(())
             prefetchAuthors(from: list)
-        } catch { postsState = .failed(error) }
+        } catch {
+            postsState = .failed(error)
+        }
     }
 
     func loadMore() async {
@@ -65,7 +71,9 @@ final class ChallengeDetailViewModel: ObservableObject {
             posts += list
             self.lastDoc = last
             prefetchAuthors(from: list)
-        } catch { print("🚨 pagination :", error.localizedDescription) }
+        } catch {
+            print("🚨 pagination :", error.localizedDescription)
+        }
     }
 
     func like(_ post: Post) {
@@ -74,28 +82,34 @@ final class ChallengeDetailViewModel: ObservableObject {
         ReactionService.shared.updateReaction(
             forPost: post.id, reactionType: "❤️", userId: uid
         ) { [weak self] res in
-            if case .failure = res { Task { @MainActor in self?.applyDelta(-1, for: post) } }
+            if case .failure = res {
+                Task { @MainActor in self?.applyDelta(-1, for: post) }
+            }
         }
     }
 
     func report(_ post: Post) {
         ReportService.shared.reportPost(postId: post.id) { [weak self] res in
             if case .success = res {
-                Task { @MainActor in self?.posts.removeAll { $0.id == post.id } }
+                Task { @MainActor in
+                    self?.posts.removeAll { $0.id == post.id }
+                }
             }
         }
     }
 
     func deletePost(_ post: Post) {
         db.collection("challengePosts").document(post.id).delete { [weak self] err in
-            if err == nil { self?.posts.removeAll { $0.id == post.id } }
+            if err == nil {
+                self?.posts.removeAll { $0.id == post.id }
+            }
         }
     }
 
     // ───────── HELPERS ─────────
     private func fetchPage(after doc: DocumentSnapshot?) async throws
-    -> ([Post], DocumentSnapshot?) {
-
+        -> ([Post], DocumentSnapshot?)
+    {
         var query = db.collection("challengePosts")
             .whereField("challengeId", isEqualTo: currentCID)
             .whereField("reported",    isEqualTo: false)
@@ -105,35 +119,42 @@ final class ChallengeDetailViewModel: ObservableObject {
         if scope == .mine, let uid = Auth.auth().currentUser?.uid {
             query = query.whereField("userId", isEqualTo: uid)
         }
-        if let doc { query = query.start(afterDocument: doc) }
+        if let doc {
+            query = query.start(afterDocument: doc)
+        }
 
         let snap = try await query.getDocuments()
-
-        // ⭐️ ‘rejected == true’ 제거, nil / false 는 그대로
         let raw  = snap.documents.compactMap(Post.init)
-        let list = raw.filter { $0.rejected != true }
 
-        return (list, snap.documents.last)
+        // ⭐️ ‘rejected == true’ 제거
+        // ⭐️ 차단된 사용자(userId) 필터링
+        let blocked = BlockManager.shared.blockedUserIds
+        let filtered = raw.filter {
+            $0.rejected != true
+            && !blocked.contains($0.userId)
+        }
+
+        return (filtered, snap.documents.last)
     }
 
     private func resetState() {
-        posts = []; userCache.removeAll()
-        lastDoc = nil; postsState = .idle
+        posts = []
+        userCache.removeAll()
+        lastDoc = nil
+        postsState = .idle
     }
 
     private func applyDelta(_ delta: Int, for post: Post) {
         guard let idx = posts.firstIndex(where: { $0.id == post.id }) else { return }
-        var p = posts[idx]
-        var map = p.reactions
-        map["❤️", default: 0] = max(0, map["❤️", default: 0] + delta)
-        p = p.copy(withReactions: map)
-        posts[idx] = p
+        let original = posts[idx]
+        var reactions = original.reactions
+        reactions["❤️", default: 0] = max(0, reactions["❤️", default: 0] + delta)
+        posts[idx] = original.copy(withReactions: reactions)
     }
 
     private func prefetchAuthors(from page: [Post]) {
         let missing = Set(page.map(\.userId)).subtracting(userCache.keys)
         guard !missing.isEmpty else { return }
-
         userRepo.fetchUsers(withIds: Array(missing)) { [weak self] res in
             if case .success(let users) = res {
                 for u in users {

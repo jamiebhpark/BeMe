@@ -1,20 +1,14 @@
-//
-//  ModalCoordinator.swift
-//  BeMeChallenge
-//
+// ── ModalCoordinator.swift ──
 
 import SwiftUI
 import SafariServices
 
-/// 앱 전역 모달·알럿·토스트·문서 뷰를 관리
 @MainActor
 final class ModalCoordinator: ObservableObject {
-
-    // ── Published ─────────────────────────────────
     @Published var modalAlert:  ModalAlert? = nil
     @Published var toast:       ToastItem?  = nil
-    @Published var webURL:      URL?        = nil      // 외부 링크 (SafariSheet)
-    @Published var markdownText: String?    = nil      // 로컬 MD 문서
+    @Published var webURL:      URL?        = nil
+    @Published var markdownText: String?    = nil
 
     // ── Alert helpers ────────────────────────────
     func showAlert(_ alert: ModalAlert) { modalAlert = alert }
@@ -27,27 +21,30 @@ final class ModalCoordinator: ObservableObject {
             withAnimation { self?.toast = nil }
         }
     }
-    func resetToast() { withAnimation { toast = nil } }
+    /// ← 이 메서드가 빠져 있으면 토스트 닫기가 컴파일 에러 납니다.
+    func resetToast() {
+        withAnimation { toast = nil }
+    }
 
     // ── Web / Markdown ───────────────────────────
-    func presentWeb(_ url: URL)          { webURL = url }
-    func dismissWeb()                    { webURL = nil }
-
-    func presentMarkdown(_ md: String)   { markdownText = md }
-    func dismissMarkdown()               { markdownText = nil }
+    func presentWeb(_ url: URL)        { webURL = url }
+    func dismissWeb()                  { webURL = nil }
+    func presentMarkdown(_ md: String) { markdownText = md }
+    func dismissMarkdown()             { markdownText = nil }
 }
 
-/* ---------- ModalAlert & ToastItem ---------- */
 enum ModalAlert: Identifiable {
     case manage(post: Post)
     case deleteConfirm(post: Post)
     case reportConfirm(post: Post)
+    case blockConfirm(userId: String, userName: String)
 
     var id: String {
         switch self {
-        case .manage(let p):        return "manage-\(p.id)"
-        case .deleteConfirm(let p): return "delete-\(p.id)"
-        case .reportConfirm(let p): return "report-\(p.id)"
+        case .manage(let p):           return "manage-\(p.id)"
+        case .deleteConfirm(let p):    return "delete-\(p.id)"
+        case .reportConfirm(let p):    return "report-\(p.id)"
+        case .blockConfirm(let uid, _):return "block-\(uid)"
         }
     }
 }

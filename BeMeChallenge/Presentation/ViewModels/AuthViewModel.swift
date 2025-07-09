@@ -1,4 +1,8 @@
-//AuthViewModel.swift
+//
+//  AuthViewModel.swift
+//  BeMeChallenge
+//
+
 import SwiftUI
 import FirebaseAuth
 import Combine
@@ -24,15 +28,21 @@ final class AuthViewModel: ObservableObject {
             Task { @MainActor in
                 let loggedIn = (user != nil)
                 self?.isLoggedIn = loggedIn
-                NotificationCenter.default.post(
-                    name: loggedIn ? .didSignIn : .didSignOut,
-                    object: nil
-                )
+
+                if loggedIn {
+                    NotificationCenter.default.post(name: .didSignIn, object: nil)
+                } else {
+                    // 로그아웃 시 차단 목록 초기화
+                    BlockManager.shared.clearBlockedUsers()
+                    NotificationCenter.default.post(name: .didSignOut, object: nil)
+                }
             }
         }
     }
     deinit {
-        if let h = authHandle { Auth.auth().removeStateDidChangeListener(h) }
+        if let h = authHandle {
+            Auth.auth().removeStateDidChangeListener(h)
+        }
     }
 
     // MARK: - Google 로그인
@@ -68,7 +78,10 @@ final class AuthViewModel: ObservableObject {
                 if let err { print("사용자 재로딩 실패:", err.localizedDescription) }
                 let loggedIn = (Auth.auth().currentUser != nil)
                 self?.isLoggedIn = loggedIn
+
                 if !loggedIn {
+                    // 이 경로로도 로그아웃 처리 시 차단 목록 초기화
+                    BlockManager.shared.clearBlockedUsers()
                     NotificationCenter.default.post(name: .didSignOut, object: nil)
                 }
             }
@@ -81,6 +94,8 @@ final class AuthViewModel: ObservableObject {
             try Auth.auth().signOut()
             GIDSignIn.sharedInstance.signOut()
             UserDefaults.standard.set(false, forKey: "hasSeenOnboarding")
+            // 로그아웃 직후 차단 목록 초기화
+            BlockManager.shared.clearBlockedUsers()
             NotificationCenter.default.post(name: .didSignOut, object: nil)
             completion?(.success(()))
         } catch {

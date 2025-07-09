@@ -1,6 +1,4 @@
-//
 //  SettingsRootView.swift
-//
 
 import SwiftUI
 
@@ -8,7 +6,7 @@ struct SettingsRootView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var modalC: ModalCoordinator
 
-    @State private var showLogoutConfirm = false     // ✅ 로그아웃 확인용
+    @State private var showLogoutConfirm = false
 
     var body: some View {
         List {
@@ -30,23 +28,28 @@ struct SettingsRootView: View {
 
             // ── 지원 ──────────────────────────────────
             Section(header: Text("지원")) {
-                NavigationLink("앱 정보")        { AboutView() }
-                NavigationLink("도움말 & FAQ")   { HelpFAQView() }
-                NavigationLink("피드백 보내기")  { FeedbackView() }
+                NavigationLink("앱 정보")      { AboutView() }
+                NavigationLink("도움말 & FAQ") { HelpFAQView() }
+                NavigationLink("피드백 보내기") { FeedbackView() }
+            }
+
+            // ── 차단 목록 ───────────────────────────────
+            Section(header: Text("차단")) {
+                NavigationLink("차단된 사용자") {
+                    BlockedUsersView()
+                }
             }
 
             // ── 계정 ──────────────────────────────────
             Section {
                 Button("로그아웃", role: .destructive) {
-                    showLogoutConfirm = true          // ✅ 시트 호출
+                    showLogoutConfirm = true
                 }
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("설정")
         .navigationBarTitleDisplayMode(.inline)
-
-        // ✅ 확인 시트
         .confirmationDialog(
             "정말 로그아웃하시겠어요?",
             isPresented: $showLogoutConfirm,
