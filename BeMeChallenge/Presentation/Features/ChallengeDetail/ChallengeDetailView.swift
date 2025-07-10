@@ -2,6 +2,8 @@
 //  ChallengeDetailView.swift
 //  BeMeChallenge
 //
+//  Updated: 2025-07-10 – 댓글 Sheet 중복 방지(.sheet) 라우팅 추가
+//
 
 import SwiftUI
 
@@ -12,24 +14,23 @@ struct ChallengeDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var modalC: ModalCoordinator
 
-    /// ① 관리 다이얼로그 토글용
+    // ───────── Alert · Sheet 상태 ─────────
     @State private var showManageDialog = false
-    /// ② 선택된 포스트 저장용
-    @State private var selectedPost: Post?
+    @State private var selectedPost: Post?            // 관리(삭제·신고·차단)
+    @State private var commentSheetPost: Post? = nil  // 💬 댓글 Sheet (전역 1개)
 
     var body: some View {
         VStack(spacing: 0) {
-            // ① 세그먼트
+
+            /* ① 세그먼트 */
             Picker("", selection: $vm.scope) {
-                ForEach(FeedScope.allCases) {
-                    Text($0.rawValue).tag($0)
-                }
+                ForEach(FeedScope.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .tint(Color("Lavender"))
             .padding(.horizontal)
 
-            // ② 본문
+            /* ② 본문 */
             switch vm.postsState {
             case .idle, .loading:
                 ProgressView().frame(maxHeight: .infinity)
@@ -45,9 +46,19 @@ struct ChallengeDetailView: View {
 
             case .loaded:
                 FeedView(vm: vm)
+                    // 🔹 Feed 셀에서 댓글 버튼 눌렀을 때 전역 Sheet 로 전파
+                    .environment(\.openURL, OpenURLAction { url in
+                        if url.scheme == "comment", let id = url.host,
+                           let post = vm.posts.first(where: { $0.id == id }) {
+                            commentSheetPost = post
+                            return .handled
+                        }
+                        return .systemAction
+                    })
             }
         }
-        // 네비게이션 바 뒤로
+
+        /* 네비게이션 뒤로 */
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -57,18 +68,19 @@ struct ChallengeDetailView: View {
                 .tint(Color("Lavender"))
             }
         }
-        // 최초 진입
+
+        /* 최초 데이터 로드 */
         .task { await vm.loadInitial(challengeId: challengeId) }
 
-        // ③ “.manage” Alert 발생 시 확인 (iOS 17+ onChange API)
-        .onChange(of: modalC.modalAlert?.id) { _oldId, _newId in
+        /* ③ .manage Alert 발생 감지 → confirmationDialog 띄우기 */
+        .onChange(of: modalC.modalAlert?.id) { _, _ in
             guard case .manage(let post)? = modalC.modalAlert else { return }
             selectedPost = post
             showManageDialog = true
             modalC.resetAlert()
         }
 
-        // ④ 삭제·신고·차단·취소 4가지 옵션을 한 번에 보여주는 confirmationDialog
+        /* ④ 게시물 관리 시트 */
         .confirmationDialog(
             "게시물 관리",
             isPresented: $showManageDialog,
@@ -95,8 +107,14 @@ struct ChallengeDetailView: View {
             Button("취소", role: .cancel) { }
         }
 
-        // ⑤ deleteConfirm, reportConfirm, blockConfirm 에 대한 실제 Alert 처리
+        /* ⑤ 실 Alert 처리(delete / report / block) */
         .alert(item: $modalC.modalAlert, content: makeAlert)
+
+        /* ⑥ 💬 댓글 Sheet ― 전역에 1개만 (중복 방지) */
+        .sheet(item: $commentSheetPost) { post in
+            CommentsSheet(post: post)
+                .environmentObject(modalC)
+        }
     }
 
     // MARK: - Alert Builder
@@ -153,7 +171,6 @@ struct ChallengeDetailView: View {
             )
 
         default:
-            // manage는 onChange로 처리했으므로 여기엔 오지 않습니다.
             return Alert(title: Text(""))
         }
     }

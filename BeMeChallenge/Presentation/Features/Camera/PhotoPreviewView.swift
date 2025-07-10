@@ -2,9 +2,12 @@
 //  PhotoPreviewView.swift
 //  BeMeChallenge
 //
+//  Updated: 2025-07-10 – 금칙어 로컬 필터 + 토스트
+//
 
 import SwiftUI
 import FirebaseFirestore
+import FirebaseAuth
 
 struct PhotoPreviewView: View {
     // MARK: – Inputs
@@ -87,9 +90,7 @@ struct PhotoPreviewView: View {
                     Button("취소") { cancelAndRollback() }
                 }
             }
-            .onAppear {
-                previewImage = cameraVM.capturedImage
-            }
+            .onAppear { previewImage = cameraVM.capturedImage }
             // 업로드 성공 시 리스너 시작
             .onReceive(cameraVM.$uploadState) { state in
                 if case .succeeded = state,
@@ -97,8 +98,16 @@ struct PhotoPreviewView: View {
                     startListeningRejection(postId: postId)
                 }
             }
-            .onDisappear {
-                listener?.remove()
+            .onDisappear { listener?.remove() }
+            // 🔻 여기에 overlay 추가
+            .overlay(alignment: .top) {
+                if let toast = modalC.toast {
+                    ToastBannerView(toast: toast)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(1_000)
+                        .padding(.top, 40)
+                        .ignoresSafeArea(.container, edges: .top)
+                }
             }
         }
     }
@@ -133,12 +142,8 @@ struct PhotoPreviewView: View {
         }
         .background(
             LinearGradient(
-                colors: [
-                    Color("PrimaryGradientStart"),
-                    Color("PrimaryGradientEnd")
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
+                colors: [Color("PrimaryGradientStart"), Color("PrimaryGradientEnd")],
+                startPoint: .leading, endPoint: .trailing
             )
         )
         .clipShape(Capsule())
@@ -148,6 +153,12 @@ struct PhotoPreviewView: View {
     // MARK: – Upload Handler
     private func startUpload() {
         guard previewImage != nil, caption.count <= 80 else { return }
+
+        // 🛑 금칙어 로컬 필터
+        if containsBadWords(caption) {
+            modalC.showToast(ToastItem(message: "🛑 부적절한 표현입니다"))
+            return
+        }
 
         cameraVM.startUpload(
             forChallenge: challengeId,
@@ -199,7 +210,7 @@ struct PhotoPreviewView: View {
             userInfo: ["cid": challengeId]
         )
         ChallengeService.shared.cancelParticipation(
-            challengeId:     challengeId,
+            challengeId: challengeId,
             participationId: participationId
         )
         cameraVM.capturedImage = nil
@@ -208,4 +219,11 @@ struct PhotoPreviewView: View {
             modalC.showToast(ToastItem(message: "촬영을 취소했어요"))
         }
     }
+
+    // MARK: – 로컬 금칙어 정규식
+    private func containsBadWords(_ text: String) -> Bool {
+        let pattern = "(시\\s*발|씨\\s*발|ㅅ\\s*ㅂ|좆|존나|f+u+c*k+|s+h+i+t+|b+i+t+c+h+)"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+    
 }

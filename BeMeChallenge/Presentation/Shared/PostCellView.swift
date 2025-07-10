@@ -2,6 +2,8 @@
 //  PostCellView.swift
 //  BeMeChallenge
 //
+//  Updated: 2025-07-10 – 댓글 수 표시
+//
 
 import SwiftUI
 import FirebaseAuth
@@ -23,6 +25,8 @@ struct PostCellView: View {
     @State private var heartScale:  CGFloat = 0.1
     @State private var heartOpacity: Double  = 0.0
 
+    @State private var showComments   = false
+
     @EnvironmentObject private var modalC: ModalCoordinator
 
     // MARK: Computed
@@ -32,7 +36,7 @@ struct PostCellView: View {
     var body: some View {
         VStack(spacing: 12) {
             header
-            imageSection              // ⭐️ Safe-Search 처리
+            imageSection
             if showActions { actionBar }
             footer
         }
@@ -43,6 +47,10 @@ struct PostCellView: View {
                 .stroke(Color("SurfaceBorder"), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+        .sheet(isPresented: $showComments) {
+            CommentsSheet(post: post)
+                .environmentObject(modalC)
+        }
     }
 
     // MARK: Header
@@ -73,7 +81,7 @@ struct PostCellView: View {
     @ViewBuilder
     private var imageSection: some View {
         switch post.rejected {
-        case .some(true):          // ⛔️ 차단
+        case .some(true):
             VStack {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 50))
@@ -87,7 +95,7 @@ struct PostCellView: View {
             .background(Color(.systemGray5))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-        case nil:                  // ⏳ 대기(검수 중)
+        case nil:
             VStack {
                 ProgressView("검수 중…")
                     .progressViewStyle(.circular)
@@ -98,7 +106,7 @@ struct PostCellView: View {
             .background(Color(.systemGray6))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-        case .some(false):         // ✅ 정상 이미지
+        case .some(false):
             ZStack {
                 AsyncCachedImage(
                     url: URL(string: post.imageUrl),
@@ -123,15 +131,28 @@ struct PostCellView: View {
         }
     }
 
-    // MARK: Like Bar
+    // MARK: Like / Comment Bar
     private var actionBar: some View {
-        HStack {
+        HStack(spacing: 20) {
+            // ❤️ Like
             Button(action: animateLike) {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .font(.title2)
-                    .foregroundColor(Color("Lavender"))
             }
+            .foregroundColor(Color("Lavender"))
+
+            // 💬 Comment + count
+            Button { showComments = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.right")
+                    Text("\(post.commentsCount)")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+            .foregroundColor(Color("Lavender"))
+
             Spacer()
+
             Text("\(likeCount)명이 좋아합니다")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(Color("Lavender"))

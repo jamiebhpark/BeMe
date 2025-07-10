@@ -9,15 +9,16 @@ import FirebaseFirestore
 struct Post: Identifiable, Hashable, Codable {
 
     // MARK: Stored properties
-    let id:        String
-    let challengeId: String
-    let userId:    String
-    let imageUrl:  String
-    let createdAt: Date
-    let reactions: [String:Int]
-    let reported:  Bool
-    let rejected:  Bool?          // ⭐️ nil = 대기, false = 통과, true = 차단
-    let caption:   String?
+    let id:           String
+    let challengeId:  String
+    let userId:       String
+    let imageUrl:     String
+    let createdAt:    Date
+    let reactions:    [String:Int]
+    let reported:     Bool
+    let rejected:     Bool?          // ⭐️ nil = 대기, false = 통과, true = 차단
+    let caption:      String?
+    let commentsCount:Int            // ⭐️ 신규
 
     // MARK: Firestore → Post
     init?(document: QueryDocumentSnapshot) {
@@ -31,15 +32,16 @@ struct Post: Identifiable, Hashable, Codable {
             let rep  = d["reported"]    as? Bool
         else { return nil }
 
-        self.id          = document.documentID
-        self.challengeId = cid
-        self.userId      = uid
-        self.imageUrl    = url
-        self.createdAt   = ts.dateValue()
-        self.reactions   = reac
-        self.reported    = rep
-        self.rejected    = d["rejected"] as? Bool      // ⭐️
-        self.caption     = d["caption"]  as? String
+        self.id            = document.documentID
+        self.challengeId   = cid
+        self.userId        = uid
+        self.imageUrl      = url
+        self.createdAt     = ts.dateValue()
+        self.reactions     = reac
+        self.reported      = rep
+        self.rejected      = d["rejected"] as? Bool
+        self.caption       = d["caption"]  as? String
+        self.commentsCount = d["commentsCount"] as? Int ?? 0
     }
 
     // MARK: Manual init (예: 미리보기용)
@@ -51,28 +53,37 @@ struct Post: Identifiable, Hashable, Codable {
         createdAt: Date = Date(),
         reactions: [String:Int] = [:],
         reported: Bool = false,
-        rejected: Bool? = nil,                         // ⭐️
-        caption: String? = nil
+        rejected: Bool? = nil,
+        caption: String? = nil,
+        commentsCount: Int = 0                   // ⭐️ 추가
     ) {
-        self.id          = id
-        self.challengeId = challengeId
-        self.userId      = userId
-        self.imageUrl    = imageUrl
-        self.createdAt   = createdAt
-        self.reactions   = reactions
-        self.reported    = reported
-        self.rejected    = rejected
-        self.caption     = caption
+        self.id            = id
+        self.challengeId   = challengeId
+        self.userId        = userId
+        self.imageUrl      = imageUrl
+        self.createdAt     = createdAt
+        self.reactions     = reactions
+        self.reported      = reported
+        self.rejected      = rejected
+        self.caption       = caption
+        self.commentsCount = commentsCount
     }
 }
 
-// 편의 copy
+// MARK: - Helper copy
 extension Post {
     func copy(withReactions r: [String:Int]) -> Post {
-        Post(id: id, challengeId: challengeId, userId: userId,
-             imageUrl: imageUrl, createdAt: createdAt,
-             reactions: r, reported: reported,
-             rejected: rejected,                     // ⭐️ 유지
-             caption: caption)
+        Post(
+            id: id,
+            challengeId: challengeId,
+            userId: userId,
+            imageUrl: imageUrl,
+            createdAt: createdAt,
+            reactions: r,
+            reported: reported,
+            rejected: rejected,
+            caption: caption,
+            commentsCount: commentsCount      // ⭐️ 그대로 유지
+        )
     }
 }

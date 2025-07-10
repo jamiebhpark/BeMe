@@ -188,6 +188,8 @@ export const createPost = onCall(
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       reactions: {},
       reported: false,
+      commentsCount: 0, // ★ 추가
+
       // ❌ rejected 필드는 넣지 않는다 (SafeSearch가 이후 추가)
     });
 
@@ -498,6 +500,134 @@ export const onChallengeIdeaArchived = onDocumentUpdated(
     }
   }
 );
+/* ──────────────────────── ★★★ 9. 댓글 기능 ★──────────────────────── */
+
+/* 9-A. createComment (Callable) */
+export const createComment = onCall(
+  {region: "asia-northeast3"},
+  async ({auth, data}) => {
+    const uid = auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const {postId, commentId, text} = data as {
+      postId?: string; commentId?: string; text?: string;
+    };
+
+    /* 1) 파라미터 검증 */
+    if (!postId || !commentId || !text) {
+      throw new HttpsError("invalid-argument", "postId / commentId / text 필수");
+    }
+    const body = String(text).trim();
+    if (body.length === 0 || body.length > 300) {
+      throw new HttpsError("invalid-argument", "댓글은 1‒300자여야 합니다.");
+    }
+    if (containsBadWords(body)) {
+      throw new HttpsError("failed-precondition", "부적절한 표현이 포함되었습니다.");
+    }
+
+    const db = admin.firestore();
+    const postRef = db.collection("challengePosts").doc(postId);
+    const commentRef = postRef.collection("comments").doc(commentId);
+
+    /* 2) 트랜잭션 */
+    await db.runTransaction(async (tx) => {
+      /* (A) 포스트 존재 / 신고 여부 확인 */
+      const postSnap = await tx.get(postRef);
+      if (!postSnap.exists) throw new HttpsError("not-found", "포스트가 없습니다.");
+      if (postSnap.get("reported") === true) {
+        throw new HttpsError("failed-precondition", "신고되어 잠긴 포스트입니다.");
+      }
+
+      /* (B) 중복 ID 방지 */
+      if ((await tx.get(commentRef)).exists) {
+        throw new HttpsError("already-exists", "이미 존재하는 commentId");
+      }
+
+      /* (C) 댓글 문서 작성 */
+      tx.set(commentRef, {
+        userId: uid,
+        text: body,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        editedAt: null,
+        reactions: {},
+        reported: false,
+      });
+
+      /* (D) commentsCount 증가(필드가 없으면 1로 세팅) */
+      tx.update(postRef, {
+        commentsCount: admin.firestore.FieldValue.increment(1),
+      });
+    });
+
+    return {success: true, commentId};
+  }
+);
+
+/* 9-B. reportComment (Callable) */
+export const reportComment = onCall(
+  {region: "asia-northeast3"},
+  async ({auth, data}) => {
+    const uid = auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "로그인 필요");
+
+    const {postId, commentId} = data as {postId?: string; commentId?: string};
+    if (!postId || !commentId) {
+      throw new HttpsError("invalid-argument", "postId / commentId 필수");
+    }
+
+    const db = admin.firestore();
+    const comment = db.collection("challengePosts").doc(postId)
+      .collection("comments").doc(commentId);
+    const rep = comment.collection("reports").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      /* 댓글 존재 확인 */
+      if (!(await tx.get(comment)).exists) {
+        throw new HttpsError("not-found", "이미 삭제되었거나 없는 댓글");
+      }
+      if ((await tx.get(rep)).exists) {
+        throw new HttpsError("already-exists", "이미 신고했습니다.");
+      }
+      tx.set(rep, {createdAt: admin.firestore.FieldValue.serverTimestamp()});
+    });
+
+    return {success: true};
+  }
+);
+
+/* 9-C. onCommentReportCreated (Trigger) */
+export const onCommentReportCreated = onDocumentCreated(
+  {
+    region: "asia-northeast3",
+    document: "challengePosts/{postId}/comments/{commentId}/reports/{uid}",
+  },
+  async (event) => {
+    const {postId, commentId} = event.params;
+    const db = admin.firestore();
+
+    const commentRef = db.collection("challengePosts").doc(postId)
+      .collection("comments").doc(commentId);
+
+    await db.runTransaction(async (tx) => {
+      const reps = await commentRef.collection("reports").count().get();
+      if (reps.data().count < 10) return; // 아직 임계치 미도달
+
+      tx.update(commentRef, {reported: true});
+    });
+
+    /* reported == true 이면 실제 삭제 + post.commentsCount 감소 */
+    const snap = await commentRef.get();
+    if (snap.exists && snap.get("reported") === true) {
+      const postRef = db.collection("challengePosts").doc(postId);
+      await db.runTransaction(async (tx) => {
+        tx.delete(commentRef);
+        tx.update(postRef, {
+          commentsCount: admin.firestore.FieldValue.increment(-1),
+        });
+      });
+    }
+  }
+);
+
 export {safeSearchScan} from "./safeSearchScan";
 export {safeSearchOnPostCreated} from "./safeSearchOnPostCreated";
-

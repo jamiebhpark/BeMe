@@ -1,10 +1,20 @@
-// ── ModalCoordinator.swift ──
+//
+//  ModalCoordinator.swift
+//  BeMeChallenge
+//
+//  Updated: 2025-07-10 – `static shared` 추가
+//
 
 import SwiftUI
 import SafariServices
 
 @MainActor
 final class ModalCoordinator: ObservableObject {
+
+    /// 전역에서 간편하게 접근하기 위한 싱글턴(옵셔널)
+    static var shared: ModalCoordinator?          // ← ★ 추가
+
+    // ───────── Published ─────────
     @Published var modalAlert:  ModalAlert? = nil
     @Published var toast:       ToastItem?  = nil
     @Published var webURL:      URL?        = nil
@@ -21,10 +31,7 @@ final class ModalCoordinator: ObservableObject {
             withAnimation { self?.toast = nil }
         }
     }
-    /// ← 이 메서드가 빠져 있으면 토스트 닫기가 컴파일 에러 납니다.
-    func resetToast() {
-        withAnimation { toast = nil }
-    }
+    func resetToast() { withAnimation { toast = nil } }
 
     // ── Web / Markdown ───────────────────────────
     func presentWeb(_ url: URL)        { webURL = url }
@@ -32,6 +39,8 @@ final class ModalCoordinator: ObservableObject {
     func presentMarkdown(_ md: String) { markdownText = md }
     func dismissMarkdown()             { markdownText = nil }
 }
+
+/* ------------ ModalAlert & ToastItem 그대로 ------------ */
 
 enum ModalAlert: Identifiable {
     case manage(post: Post)
@@ -41,10 +50,10 @@ enum ModalAlert: Identifiable {
 
     var id: String {
         switch self {
-        case .manage(let p):           return "manage-\(p.id)"
-        case .deleteConfirm(let p):    return "delete-\(p.id)"
-        case .reportConfirm(let p):    return "report-\(p.id)"
-        case .blockConfirm(let uid, _):return "block-\(uid)"
+        case .manage(let p):            return "manage-\(p.id)"
+        case .deleteConfirm(let p):     return "delete-\(p.id)"
+        case .reportConfirm(let p):     return "report-\(p.id)"
+        case .blockConfirm(let uid, _): return "block-\(uid)"
         }
     }
 }
@@ -60,5 +69,5 @@ struct SafariView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> SFSafariViewController {
         SFSafariViewController(url: url)
     }
-    func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
+    func updateUIViewController(_ vc: SFSafariViewController, context: Context) { }
 }
