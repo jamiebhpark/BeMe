@@ -3,8 +3,16 @@ import Foundation
 import FirebaseFirestore
 
 public enum ChallengeType: String, Codable {
-    case mandatory = "필수"
-    case open      = "오픈"
+    case mandatory   // Firestore 값: "mandatory"
+    case open        // Firestore 값: "open"
+
+    /// 화면에 표시할 한글 / 로컬라이즈드 문자열
+    var displayName: String {
+        switch self {
+        case .mandatory: return "필수"
+        case .open:      return "오픈"
+        }
+    }
 }
 
 public struct Challenge: Identifiable, Codable {

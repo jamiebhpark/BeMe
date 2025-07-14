@@ -13,6 +13,7 @@ import UIKit
 // MARK: - 완료 브로드캐스트용 Notification
 extension Notification.Name {
     static let uploadQueueDidFlush = Notification.Name("uploadQueueDidFlush")
+    static let commentAdded = Notification.Name("commentAdded")
 }
 
 /// 실패한 업로드 정보를 담는 구조체

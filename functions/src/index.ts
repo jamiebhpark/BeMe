@@ -628,6 +628,119 @@ export const onCommentReportCreated = onDocumentCreated(
     }
   }
 );
+/* ───────────────── 9. onPostCreatedUpdateChallengeStreak ───────────────── */
+export const onPostCreatedUpdateChallengeStreak = onDocumentCreated(
+  {region: "asia-northeast3", document: "challengePosts/{postId}"},
+  async (event) => {
+    const snap = event.data; if (!snap) return;
+
+    const uid = snap.get("userId") as string | undefined;
+    const cid = snap.get("challengeId") as string | undefined;
+    if (!uid || !cid) return;
+
+    /* ① 챌린지 타입이 'mandatory' 인지 확인 ― 아니라면 바로 종료 */
+    const chDoc = await admin.firestore().collection("challenges").doc(cid).get();
+    if (chDoc.get("type") !== "mandatory") return; // ★ 필수 챌린지 전용
+
+    /* ② streak 계산 */
+    const todayISO = DateTime.now().setZone("Asia/Seoul").toFormat("yyyy-MM-dd");
+    const db = admin.firestore();
+    const streakRef = db.collection("users").doc(uid)
+      .collection("streaks").doc(cid);
+
+    await db.runTransaction(async (tx) => {
+      const stSnap = await tx.get(streakRef);
+
+      let streak = 1;
+      if (stSnap.exists) {
+        const last = stSnap.get("lastDate") as string | "";
+        const diff = last ?
+          DateTime.fromISO(todayISO).diff(DateTime.fromISO(last), "days").days :
+          0;
+        streak = (diff === 0 || diff === 1) ? (stSnap.get("streakCount") as number) + 1 : 1;
+      }
+
+      tx.set(streakRef, {
+        streakCount: streak,
+        lastDate: todayISO,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+
+      tx.update(snap.ref, {streakNum: streak}); // 포스트 문서에 주입
+    });
+
+    /* ③ 7·14·21…일마다 축하 Push (원하면 % 3 으로 바꿔 테스트) */
+    const streakNow = (await streakRef.get()).get("streakCount") as number;
+    if (streakNow % 7 === 0) { // ← 실운영은 7
+      const token = (await db.collection("users").doc(uid).get())
+        .get("fcmToken") as string | undefined;
+      if (token) {
+        await admin.messaging().send({
+          token,
+          notification: {
+            title: `🔥 ${streakNow}일 연속 인증 성공!`,
+            body: "기록을 이어가 보세요",
+          },
+          data: {type: "streak", challengeId: cid, streak: String(streakNow)},
+          android: {priority: "high"},
+        });
+      }
+    }
+  }
+);
+
+/* ───────────── 10. onPostCreatedUpdateOpenCount ───────────── */
+export const onPostCreatedUpdateOpenCount = onDocumentCreated(
+  {region: "asia-northeast3", document: "challengePosts/{postId}"},
+  async (event) => {
+    const snap = event.data; if (!snap) return;
+
+    const uid = snap.get("userId") as string | undefined;
+    const cid = snap.get("challengeId") as string | undefined;
+    if (!uid || !cid) return;
+
+    /* ① 챌린지 타입이 'open' 인지 확인 ― 아니면 종료 */
+    const chDoc = await admin.firestore().collection("challenges").doc(cid).get();
+    if (chDoc.get("type") !== "open") return; // ★ 오픈 챌린지 전용
+
+    const db = admin.firestore();
+    const countRef = db.collection("users").doc(uid)
+      .collection("openCounts").doc(cid);
+
+    /* ② count 증가 & 포스트에 openCountNum 주입 */
+    const count = await db.runTransaction(async (tx) => {
+      const prev = await tx.get(countRef);
+      const current = (prev.get("count") as number | undefined) ?? 0;
+      const next = current + 1;
+
+      tx.set(countRef, {
+        count: next,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+
+      tx.update(snap.ref, {openCountNum: next});
+      return next;
+    });
+
+    /* ③ 10·25·50·100 회 달성 Push (선택) */
+    if ([10, 25, 50, 100].includes(count)) {
+      const token = (await db.collection("users").doc(uid).get())
+        .get("fcmToken") as string | undefined;
+      if (token) {
+        await admin.messaging().send({
+          token,
+          notification: {
+            title: `🏅 ${count}회 참여 달성!`,
+            body: "오픈 챌린지 기여를 이어가 보세요",
+          },
+          data: {type: "openCount", challengeId: cid, count: String(count)},
+          android: {priority: "high"},
+        });
+      }
+    }
+  }
+);
+
 
 export {safeSearchScan} from "./safeSearchScan";
 export {safeSearchOnPostCreated} from "./safeSearchOnPostCreated";

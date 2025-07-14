@@ -61,7 +61,7 @@ struct ChallengeCardView: View {
             }
             
             // 1) 타입 뱃지
-            Text(challenge.type.rawValue)
+            Text(challenge.type.displayName)
                 .font(.caption2).bold()
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(typeBadgeBackground)

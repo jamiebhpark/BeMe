@@ -11,8 +11,8 @@ struct HomeView: View {
 
             // ── 세그먼트 ---------------------------------------------------
             Picker("챌린지 타입", selection: $selectedType) {
-                Text(ChallengeType.mandatory.rawValue).tag(ChallengeType.mandatory)
-                Text(ChallengeType.open.rawValue)     .tag(ChallengeType.open)
+                Text(ChallengeType.mandatory.displayName).tag(ChallengeType.mandatory)
+                Text(ChallengeType.open.displayName)     .tag(ChallengeType.open)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)

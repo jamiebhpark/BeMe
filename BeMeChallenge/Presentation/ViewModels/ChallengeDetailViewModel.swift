@@ -39,11 +39,29 @@ final class ChallengeDetailViewModel: ObservableObject {
 
     // MARK: Init
     init() {
-        // 로그인 해제 시 상태 초기화
+        // ① 로그인 해제 시 상태 초기화
         NotificationCenter.default.publisher(for: .didSignOut)
-            .sink { [weak self] _ in Task { @MainActor in self?.resetState() } }
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.resetState() }
+            }
+            .store(in: &cancellables)
+        
+        // ② 댓글 작성 성공 → 즉시 commentsCount +1
+        NotificationCenter.default.publisher(for: .commentAdded)
+            .sink { [weak self] note in
+                guard
+                    let self,
+                    let pid = note.userInfo?["postId"] as? String,
+                    let idx = self.posts.firstIndex(where: { $0.id == pid })
+                else { return }
+                
+                let current = self.posts[idx]
+                let updated = current.copy(commentsCount: current.commentsCount + 1)
+                self.posts[idx] = updated
+            }
             .store(in: &cancellables)
     }
+
 
     // ───────── PUBLIC API ─────────
     func loadInitial(challengeId cid: String) async {

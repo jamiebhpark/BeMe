@@ -35,36 +35,47 @@ final class CommentsViewModel: ObservableObject {
 
     // MARK: – Public API
     func addComment(text: String) {
-        guard !isSending, let _ = Auth.auth().currentUser?.uid else { return }
+        guard !isSending, Auth.auth().currentUser != nil else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= 300 else { return }
 
-        /* 🛑 1) 로컬 금칙어 필터 */
+        // 🛑 금칙어
         if hasBadWords(trimmed) {
             ModalCoordinator.shared?.showToast(.init(message: "부적절한 표현입니다"))
             return
         }
 
-        /* 2) 서버 호출 */
         isSending = true
         let fn = Functions.functions(region: "asia-northeast3")
             .httpsCallable("createComment")
 
-        Task.detached {
+        let pid = self.postId                      // 캡처용
+        Task.detached { [weak self] in
+            defer { Task { @MainActor in self?.isSending = false } }
+
             do {
                 _ = try await fn.call([
-                    "postId":    self.postId,
+                    "postId":    pid,
                     "commentId": UUID().uuidString,
                     "text":      trimmed,
                 ])
+
+                // ✅ 댓글 작성 성공 → 즉시 UI 갱신용 노티
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .commentAdded,
+                        object: nil,
+                        userInfo: ["postId": pid]
+                    )
+                }
             } catch {
                 await MainActor.run {
                     ModalCoordinator.shared?.showToast(.init(message: "업로드 실패"))
                 }
             }
-            await MainActor.run { self.isSending = false }
         }
     }
+
 
     func delete(_ comment: Comment) {
         guard comment.userId == Auth.auth().currentUser?.uid else { return }

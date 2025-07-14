@@ -2,7 +2,7 @@
 //  PostCellView.swift
 //  BeMeChallenge
 //
-//  Updated: 2025-07-10 – 댓글 수 표시
+//  Updated: 2025-07-14 – 댓글 수 표시 + 연속 🔥 뱃지
 //
 
 import SwiftUI
@@ -24,7 +24,6 @@ struct PostCellView: View {
     @State private var showHeart      = false
     @State private var heartScale:  CGFloat = 0.1
     @State private var heartOpacity: Double  = 0.0
-
     @State private var showComments   = false
 
     @EnvironmentObject private var modalC: ModalCoordinator
@@ -33,6 +32,7 @@ struct PostCellView: View {
     private var likeCount: Int { post.reactions["❤️", default: 0] }
     private var isLiked  : Bool { likeCount > 0 }
 
+    // MARK: Body
     var body: some View {
         VStack(spacing: 12) {
             header
@@ -81,52 +81,75 @@ struct PostCellView: View {
     @ViewBuilder
     private var imageSection: some View {
         switch post.rejected {
-        case .some(true):
-            VStack {
-                Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.red)
-                Text("부적절한 이미지")
-                    .font(.subheadline).bold()
-                    .foregroundColor(.red)
-            }
-            .frame(height: 280)
-            .frame(maxWidth: .infinity)
-            .background(Color(.systemGray5))
+        case .some(true):   blockedView
+        case nil:           pendingView
+        case .some(false):  photoView      // ✅ 정상 이미지
+        }
+    }
+
+    /// ⛔️ 차단 이미지
+    private var blockedView: some View {
+        VStack {
+            Image(systemName: "hand.raised.fill")
+                .font(.system(size: 50))
+                .foregroundColor(.red)
+            Text("부적절한 이미지")
+                .font(.subheadline).bold()
+                .foregroundColor(.red)
+        }
+        .frame(height: 280)
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemGray5))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// ⏳ 검사 중
+    private var pendingView: some View {
+        VStack {
+            ProgressView("검수 중…")
+                .progressViewStyle(.circular)
+                .tint(.orange)
+        }
+        .frame(height: 280)
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// ✅ 정상 이미지 + Like 애니메이션 + Streak 뱃지
+    private var photoView: some View {
+        ZStack(alignment: .topLeading) {
+            AsyncCachedImage(
+                url: URL(string: post.imageUrl),
+                content: { $0.resizable().scaledToFill() },
+                placeholder: { Color(.systemGray5) },
+                failure:     { Color(.systemGray5) }
+            )
+            .frame(height: 300)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { animateLike() }
 
-        case nil:
-            VStack {
-                ProgressView("검수 중…")
-                    .progressViewStyle(.circular)
-                    .tint(.orange)
+            if showHeart {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 90))
+                    .foregroundColor(.white)
+                    .scaleEffect(heartScale)
+                    .opacity(heartOpacity)
+                    .shadow(radius: 10)
             }
-            .frame(height: 280)
-            .frame(maxWidth: .infinity)
-            .background(Color(.systemGray6))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-        case .some(false):
-            ZStack {
-                AsyncCachedImage(
-                    url: URL(string: post.imageUrl),
-                    content: { $0.resizable().scaledToFill() },
-                    placeholder: { Color(.systemGray5) },
-                    failure:     { Color(.systemGray5) }
-                )
-                .frame(height: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { animateLike() }
-
-                if showHeart {
-                    Image(systemName: "heart.fill")
-                        .font(.system(size: 90))
-                        .foregroundColor(.white)
-                        .scaleEffect(heartScale)
-                        .opacity(heartOpacity)
-                        .shadow(radius: 10)
-                }
+            // 🔥 Streak Badge (2일 이상)
+            if let n = post.streakNum, n > 0 {
+                StreakBadgeView(count: n)
+                    .padding(8)
+                    .transition(.scale.combined(with: .opacity))
+            }
+            // 🏅 Open Count Badge (open 챌린지)
+            else if let c = post.openCountNum, c > 0 {
+                OpenCountBadgeView(count: c)
+                    .padding(8)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
     }
