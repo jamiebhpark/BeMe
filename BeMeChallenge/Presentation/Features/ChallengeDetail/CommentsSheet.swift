@@ -2,7 +2,7 @@
 //  CommentsSheet.swift
 //  BeMeChallenge
 //
-//  Updated: 2025-07-10 – 빈 상태 메시지 추가
+//  Updated: 2025-07-15 – 댓글 *수정* 기능 & 빈 상태 메시지
 //
 
 import SwiftUI
@@ -16,6 +16,12 @@ struct CommentsSheet: View {
     @EnvironmentObject private var modalC: ModalCoordinator
 
     @State private var input = ""
+
+    // 🆕 수정 관련 State ---------------------------
+    @State private var showingEditAlert  = false
+    @State private var editedText        = ""
+    @State private var editingComment: Comment?
+    // --------------------------------------------
 
     // MARK: Init
     init(post: Post) {
@@ -31,7 +37,6 @@ struct CommentsSheet: View {
             inputBar
         }
         .onTapGesture { hideKeyboard() }
-        // 🔻 여기 ↓ 추가
         .overlay(alignment: .top) {
             if let toast = modalC.toast {
                 ToastBannerView(toast: toast)
@@ -41,6 +46,20 @@ struct CommentsSheet: View {
                     .ignoresSafeArea(.container, edges: .top)
             }
         }
+        // 🆕 Alert with TextField ------------------
+        .alert("댓글 수정",
+               isPresented: $showingEditAlert,
+               actions: {
+                   TextField("", text: $editedText, axis: .vertical)
+                       .lineLimit(3, reservesSpace: true)
+                   Button("저장") {
+                       if let target = editingComment {
+                           vm.edit(target, newText: editedText)
+                       }
+                   }
+                   Button("취소", role: .cancel) { }
+               },
+               message: { Text("300자까지 입력 가능합니다.") })
     }
 
     // MARK: Header
@@ -63,13 +82,7 @@ struct CommentsSheet: View {
                     ForEach(vm.comments) { c in
                         CommentRow(comment: c, user: vm.userCache[c.userId])
                             .listRowSeparator(.hidden)
-                            .contextMenu {
-                                if c.userId == Auth.auth().currentUser?.uid {
-                                    Button("삭제", role: .destructive) { vm.delete(c) }
-                                } else {
-                                    Button("신고", role: .destructive) { vm.report(c) }
-                                }
-                            }
+                            .contextMenu { contextMenu(for: c) }   // 🆕
                     }
                 }
                 .listStyle(.plain)
@@ -81,11 +94,38 @@ struct CommentsSheet: View {
                     }
                 }
 
-                // ➕ 빈 상태 안내
                 if vm.comments.isEmpty {
                     Text("아직 댓글이 없습니다")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // 🆕 컨텍스트 메뉴 빼서 함수화
+    @ViewBuilder
+    private func contextMenu(for c: Comment) -> some View {
+        if c.userId == Auth.auth().currentUser?.uid {
+            Button("수정") {
+                editingComment = c
+                editedText = c.text
+                showingEditAlert = true
+            }
+            Button("삭제", role: .destructive) { vm.delete(c) }
+        } else {
+            Button("신고", role: .destructive) { vm.report(c) }
+        }
+        // 🔥 [NEW] 작성자 차단
+        Button("차단", role: .destructive) {
+            BlockService.shared.block(userId: c.userId) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success:
+                        modalC.showToast(.init(message: "차단되었습니다"))
+                    case .failure:
+                        modalC.showToast(.init(message: "차단에 실패했습니다"))
+                    }
                 }
             }
         }

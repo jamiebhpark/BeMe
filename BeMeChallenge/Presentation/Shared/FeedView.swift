@@ -33,6 +33,10 @@ struct FeedView: View {
                     loadingMoreSpinner
                 }
             }
+            .refreshable {
+                await vm.loadInitial(challengeId: vm.currentCID)
+                // loadInitial 가 끝나면 refresh 인디케이터가 자동으로 사라집니다.
+            }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .onAppear      { syncWithVM() }
             .onChange(of: vm.posts) { _, _ in syncWithVM() }

@@ -2,10 +2,11 @@
 //  ChallengeDetailView.swift
 //  BeMeChallenge
 //
-//  Updated: 2025-07-10 – 댓글 Sheet 중복 방지(.sheet) 라우팅 추가
+//  v7-fix – confirmationDialog 빌드 오류 해결
 //
 
 import SwiftUI
+import FirebaseAuth
 
 struct ChallengeDetailView: View {
     let challengeId: String
@@ -15,14 +16,19 @@ struct ChallengeDetailView: View {
     @EnvironmentObject private var modalC: ModalCoordinator
 
     // ───────── Alert · Sheet 상태 ─────────
-    @State private var showManageDialog = false
-    @State private var selectedPost: Post?            // 관리(삭제·신고·차단)
-    @State private var commentSheetPost: Post? = nil  // 💬 댓글 Sheet (전역 1개)
+    @State private var showManageDialog   = false
+    @State private var selectedPost: Post?
+    @State private var commentSheetPost: Post?
+
+    // 🆕 캡션 수정
+    @State private var editingPost:  Post?
+    @State private var captionInput       = ""
+    @State private var showCaptionEditor  = false
 
     var body: some View {
         VStack(spacing: 0) {
 
-            /* ① 세그먼트 */
+            // ① 세그먼트
             Picker("", selection: $vm.scope) {
                 ForEach(FeedScope.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -30,7 +36,7 @@ struct ChallengeDetailView: View {
             .tint(Color("Lavender"))
             .padding(.horizontal)
 
-            /* ② 본문 */
+            // ② 본문
             switch vm.postsState {
             case .idle, .loading:
                 ProgressView().frame(maxHeight: .infinity)
@@ -38,27 +44,24 @@ struct ChallengeDetailView: View {
             case .failed(let err):
                 VStack(spacing: 12) {
                     Text("로드 실패: \(err.localizedDescription)")
-                    Button("재시도") {
-                        Task { await vm.loadInitial(challengeId: challengeId) }
-                    }
+                    Button("재시도") { Task { await vm.loadInitial(challengeId: challengeId) } }
                 }
                 .frame(maxHeight: .infinity)
 
             case .loaded:
                 FeedView(vm: vm)
-                    // 🔹 Feed 셀에서 댓글 버튼 눌렀을 때 전역 Sheet 로 전파
                     .environment(\.openURL, OpenURLAction { url in
-                        if url.scheme == "comment", let id = url.host,
-                           let post = vm.posts.first(where: { $0.id == id }) {
-                            commentSheetPost = post
-                            return .handled
-                        }
-                        return .systemAction
+                        guard url.scheme == "comment",
+                              let id   = url.host,
+                              let post = vm.posts.first(where: { $0.id == id })
+                        else { return .systemAction }
+                        commentSheetPost = post
+                        return .handled
                     })
             }
         }
 
-        /* 네비게이션 뒤로 */
+        // 뒤로가기
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -69,52 +72,74 @@ struct ChallengeDetailView: View {
             }
         }
 
-        /* 최초 데이터 로드 */
+        // 최초 로드
         .task { await vm.loadInitial(challengeId: challengeId) }
 
-        /* ③ .manage Alert 발생 감지 → confirmationDialog 띄우기 */
+        // ③ .manage Alert 감지 → 사용자 정의 dialog 띄우기
         .onChange(of: modalC.modalAlert?.id) { _, _ in
             guard case .manage(let post)? = modalC.modalAlert else { return }
-            selectedPost = post
+            selectedPost     = post
             showManageDialog = true
             modalC.resetAlert()
         }
 
-        /* ④ 게시물 관리 시트 */
+        // ④ 게시물 관리 메뉴 (작성자 vs 타인 구분)
         .confirmationDialog(
             "게시물 관리",
             isPresented: $showManageDialog,
             titleVisibility: .visible
         ) {
-            Button("삭제", role: .destructive) {
-                if let post = selectedPost {
-                    modalC.showAlert(.deleteConfirm(post: post))
-                }
-            }
-            Button("신고") {
-                if let post = selectedPost {
-                    modalC.showAlert(.reportConfirm(post: post))
-                }
-            }
-            Button("차단", role: .destructive) {
-                if let post = selectedPost {
-                    modalC.showAlert(.blockConfirm(
-                        userId:   post.userId,
-                        userName: post.userId
-                    ))
+            if let post = selectedPost {
+                if Auth.auth().currentUser?.uid == post.userId {
+                    // ── 작성자 ──
+                    Button("캡션 수정") {
+                        captionInput       = post.caption ?? ""
+                        editingPost        = post
+                        showCaptionEditor  = true
+                    }
+                    Button("삭제", role: .destructive) {
+                        modalC.showAlert(.deleteConfirm(post: post))
+                    }
+                } else {
+                    // ── 타인 ──
+                    Button("신고", role: .destructive) {
+                        modalC.showAlert(.reportConfirm(post: post))
+                    }
+                    Button("차단", role: .destructive) {
+                        modalC.showAlert(.blockConfirm(
+                            userId:   post.userId,
+                            userName: post.userId   // 닉네임으로 바꾸려면 수정
+                        ))
+                    }
                 }
             }
             Button("취소", role: .cancel) { }
         }
 
-        /* ⑤ 실 Alert 처리(delete / report / block) */
+        // ⑤ delete / report / block Alert
         .alert(item: $modalC.modalAlert, content: makeAlert)
 
-        /* ⑥ 💬 댓글 Sheet ― 전역에 1개만 (중복 방지) */
+        // ⑥ 💬 댓글 Sheet
         .sheet(item: $commentSheetPost) { post in
             CommentsSheet(post: post)
                 .environmentObject(modalC)
         }
+
+        // ⑦ 캡션 수정 Alert
+        .alert(
+            "캡션 수정",
+            isPresented: $showCaptionEditor,
+            actions: {
+                TextField("80자 이내", text: $captionInput)
+                Button("저장") {
+                    if let p = editingPost {
+                        vm.updateCaption(p, to: captionInput)
+                    }
+                }
+                Button("취소", role: .cancel) { }
+            },
+            message: { Text("부적절한 표현 또는 80자를 초과하면 저장되지 않습니다.") }
+        )
     }
 
     // MARK: - Alert Builder
@@ -129,10 +154,7 @@ struct ChallengeDetailView: View {
                     modalC.resetAlert()
                     modalC.showToast(.init(message: "삭제 완료"))
                 },
-                secondaryButton: .cancel {
-                    modalC.resetAlert()
-                }
-            )
+                secondaryButton: .cancel { modalC.resetAlert() })
 
         case .reportConfirm(let post):
             return Alert(
@@ -143,32 +165,26 @@ struct ChallengeDetailView: View {
                     modalC.resetAlert()
                     modalC.showToast(.init(message: "신고 접수"))
                 },
-                secondaryButton: .cancel {
-                    modalC.resetAlert()
-                }
-            )
+                secondaryButton: .cancel { modalC.resetAlert() })
 
-        case .blockConfirm(let userId, let userName):
+        case .blockConfirm(let uid, let name):
             return Alert(
-                title: Text("\(userName)님을 차단하시겠습니까?"),
+                title: Text("\(name)님을 차단하시겠습니까?"),
                 message: Text("차단된 사용자의 게시물은 더 이상 보이지 않습니다."),
                 primaryButton: .destructive(Text("차단")) {
-                    BlockService.shared.block(userId: userId) { result in
+                    BlockService.shared.block(userId: uid) { result in
                         DispatchQueue.main.async {
                             switch result {
                             case .success:
                                 modalC.showToast(.init(message: "차단되었습니다"))
                             case .failure:
-                                modalC.showToast(.init(message: "차단에 실패했습니다"))
+                                modalC.showToast(.init(message: "차단 실패"))
                             }
                         }
                     }
                     modalC.resetAlert()
                 },
-                secondaryButton: .cancel {
-                    modalC.resetAlert()
-                }
-            )
+                secondaryButton: .cancel { modalC.resetAlert() })
 
         default:
             return Alert(title: Text(""))

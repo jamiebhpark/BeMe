@@ -204,6 +204,36 @@ export const createPost = onCall(
     return {success: true, postId: docRef.id};
   }
 );
+/* ───────── 0-Z. updateCaption (Callable) ───────── */
+export const updateCaption = onCall(
+  {region: "asia-northeast3"},
+  async ({auth, data}) => {
+    const uid = auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const {postId, newCaption} = data as {postId?: string; newCaption?: string};
+    if (!postId || newCaption === undefined) {
+      throw new HttpsError("invalid-argument", "postId / newCaption 필수");
+    }
+    const body = String(newCaption).trim();
+    if (body.length > 80) {
+      throw new HttpsError("invalid-argument", "80자 이내");
+    }
+    if (containsBadWords(body)) {
+      throw new HttpsError("failed-precondition", "부적절한 표현");
+    }
+
+    const postRef = admin.firestore().collection("challengePosts").doc(postId);
+    /* 작성자 확인 */
+    const snap = await postRef.get();
+    if (!snap.exists || snap.get("userId") !== uid) {
+      throw new HttpsError("permission-denied", "권한 없음");
+    }
+
+    await postRef.update({caption: body});
+    return {success: true};
+  }
+);
 
 /* ───────────────────────── 3. cancelParticipation ──────────────────── */
 export const cancelParticipation = onCall(

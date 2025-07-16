@@ -81,6 +81,7 @@ struct Post: Identifiable, Hashable, Codable {
 // MARK: - Helper copy
 extension Post {
     func copy(withReactions r: [String:Int]? = nil,
+              caption: String? = nil,          // ← 추가
               streakNum: Int? = nil,
               openCountNum: Int? = nil,
               commentsCount: Int? = nil) -> Post {
@@ -93,7 +94,7 @@ extension Post {
             reactions: r ?? reactions,
             reported: reported,
             rejected: rejected,
-            caption: caption,
+            caption: caption ?? self.caption,          // 👈
             commentsCount: commentsCount ?? self.commentsCount,
             streakNum: streakNum ?? self.streakNum,
             openCountNum: openCountNum ?? self.openCountNum      // ← 추가
