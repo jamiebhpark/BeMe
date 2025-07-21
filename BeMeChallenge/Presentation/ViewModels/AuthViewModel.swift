@@ -2,6 +2,12 @@
 //  AuthViewModel.swift
 //  BeMeChallenge
 //
+//  Updated: 2025-07-22
+//  ─────────────────────────────────────────────
+//  • @Published var isAdmin 추가
+//  • 로그인 / 강제 새로고침 시 custom-claim 조회
+//  • 로그아웃 시 isAdmin 리셋
+//
 
 import SwiftUI
 import FirebaseAuth
@@ -15,24 +21,39 @@ extension Notification.Name {
     static let didSignOut = Notification.Name("AuthDidSignOut")
 }
 
+private extension Result {
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
+    }
+}
+
 @MainActor
 final class AuthViewModel: ObservableObject {
-    @Published var isLoggedIn = false
 
-    private var authHandle: AuthStateDidChangeListenerHandle?
+    // ───────── PUBLIC 상태 ─────────
+    @Published var isLoggedIn = false
+    @Published var isAdmin    = false          // ⭐️ 추가
+
+    // ───────── PRIVATE ─────────
+    private var authHandle : AuthStateDidChangeListenerHandle?
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: - Init
+    // MARK: – Init / Deinit
     init() {
         authHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
-            Task { @MainActor in
-                let loggedIn = (user != nil)
-                self?.isLoggedIn = loggedIn
+            guard let self else { return }
 
-                if loggedIn {
+            Task { @MainActor in
+                self.isLoggedIn = (user != nil)
+
+                if let u = user {
+                    // ⚡️ custom-claim 조회
+                    let tok = try? await u.getIDTokenResult()
+                    self.isAdmin = (tok?.claims["isAdmin"] as? Bool) ?? false
                     NotificationCenter.default.post(name: .didSignIn, object: nil)
                 } else {
-                    // 로그아웃 시 차단 목록 초기화
+                    self.isAdmin = false
                     BlockManager.shared.clearBlockedUsers()
                     NotificationCenter.default.post(name: .didSignOut, object: nil)
                 }
@@ -40,62 +61,60 @@ final class AuthViewModel: ObservableObject {
         }
     }
     deinit {
-        if let h = authHandle {
-            Auth.auth().removeStateDidChangeListener(h)
-        }
+        if let h = authHandle { Auth.auth().removeStateDidChangeListener(h) }
     }
 
-    // MARK: - Google 로그인
+    // MARK: – Google 로그인
     func loginWithGoogle(using presentingVC: UIViewController) {
         AuthService.shared.signInWithGoogle(presenting: presentingVC) { result in
-            switch result {
-            case .success:
-                AnalyticsManager.shared.logUserLogin(method: "google", success: true)
-            case .failure(let err):
-                AnalyticsManager.shared.logUserLogin(method: "google", success: false)
+            AnalyticsManager.shared.logUserLogin(method: "google",
+                                                 success: result.isSuccess)
+            if case .failure(let err) = result {
                 print("Google 로그인 실패:", err.localizedDescription)
             }
         }
     }
 
-    // MARK: - Apple 로그인
+    // MARK: – Apple 로그인
     func loginWithApple(using credential: ASAuthorizationAppleIDCredential) {
         AuthService.shared.signInWithApple(credential: credential) { result in
-            switch result {
-            case .success:
-                AnalyticsManager.shared.logUserLogin(method: "apple", success: true)
-            case .failure(let err):
-                AnalyticsManager.shared.logUserLogin(method: "apple", success: false)
+            AnalyticsManager.shared.logUserLogin(method: "apple",
+                                                 success: result.isSuccess)
+            if case .failure(let err) = result {
                 print("Apple 로그인 실패:", err.localizedDescription)
             }
         }
     }
 
-    // MARK: - 강제 새로고침
+    // MARK: – 강제 새로고침 (EULA 등 후처리)
     func checkLoginStatus() {
-        Auth.auth().currentUser?.reload { [weak self] err in
+        guard let user = Auth.auth().currentUser else { return }
+
+        user.reload { [weak self] err in
+            guard let self else { return }
             Task { @MainActor in
                 if let err { print("사용자 재로딩 실패:", err.localizedDescription) }
-                let loggedIn = (Auth.auth().currentUser != nil)
-                self?.isLoggedIn = loggedIn
 
-                if !loggedIn {
-                    // 이 경로로도 로그아웃 처리 시 차단 목록 초기화
-                    BlockManager.shared.clearBlockedUsers()
-                    NotificationCenter.default.post(name: .didSignOut, object: nil)
-                }
+                self.isLoggedIn = true   // user 가 nil 아님 → 로그인 상태
+
+                // ⚡️ admin 플래그 갱신
+                let tok = try? await user.getIDTokenResult(forcingRefresh: true)
+                self.isAdmin = (tok?.claims["isAdmin"] as? Bool) ?? false
             }
         }
     }
 
-    // MARK: - 로그아웃
+    // MARK: – 로그아웃
     func signOut(completion: ((Result<Void, Error>) -> Void)? = nil) {
         do {
             try Auth.auth().signOut()
             GIDSignIn.sharedInstance.signOut()
+
             UserDefaults.standard.set(false, forKey: "hasSeenOnboarding")
-            // 로그아웃 직후 차단 목록 초기화
             BlockManager.shared.clearBlockedUsers()
+
+            isLoggedIn = false
+            isAdmin    = false          // ⭐️ 리셋
             NotificationCenter.default.post(name: .didSignOut, object: nil)
             completion?(.success(()))
         } catch {

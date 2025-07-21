@@ -14,6 +14,8 @@ struct ChallengeDetailView: View {
     @StateObject private var vm = ChallengeDetailViewModel()
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var modalC: ModalCoordinator
+    @EnvironmentObject private var authVM: AuthViewModel   // ⬅️ 추가
+
 
     // ───────── Alert · Sheet 상태 ─────────
     @State private var showManageDialog   = false
@@ -90,29 +92,28 @@ struct ChallengeDetailView: View {
             titleVisibility: .visible
         ) {
             if let post = selectedPost {
-                if Auth.auth().currentUser?.uid == post.userId {
-                    // ── 작성자 ──
-                    Button("캡션 수정") {
-                        captionInput       = post.caption ?? ""
+                let isOwner = Auth.auth().currentUser?.uid == post.userId
+                let isAdmin = authVM.isAdmin                    // ⬅️
+
+                if isOwner {                        // ── 작성자 ──
+                    Button("캡션 수정") {                        captionInput       = post.caption ?? ""
                         editingPost        = post
                         showCaptionEditor  = true
                     }
-                    Button("삭제", role: .destructive) {
-                        modalC.showAlert(.deleteConfirm(post: post))
-                    }
-                } else {
-                    // ── 타인 ──
-                    Button("신고", role: .destructive) {
-                        modalC.showAlert(.reportConfirm(post: post))
-                    }
+                    Button("삭제", role: .destructive) { modalC.showAlert(.deleteConfirm(post: post)) }
+
+                } else if isAdmin {                 // ── 관리자 ──
+                    Button("삭제", role: .destructive) { modalC.showAlert(.deleteConfirm(post: post)) }
+
+                } else {                            // ── 일반 사용자 ──
+                    Button("신고", role: .destructive) { modalC.showAlert(.reportConfirm(post: post)) }
                     Button("차단", role: .destructive) {
-                        modalC.showAlert(.blockConfirm(
-                            userId:   post.userId,
-                            userName: post.userId   // 닉네임으로 바꾸려면 수정
-                        ))
+                        modalC.showAlert(.blockConfirm(userId: post.userId,
+                                                       userName: post.userId))
                     }
                 }
             }
+
             Button("취소", role: .cancel) { }
         }
 

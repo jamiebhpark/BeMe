@@ -2,7 +2,7 @@
 //  ChallengeDetailViewModel.swift
 //  BeMeChallenge
 //
-//  v7 – commentCountChanged(delta)로 말풍선 숫자 ± 실시간 반영
+//  Updated: 2025-07-22
 //
 
 import Foundation
@@ -14,10 +14,10 @@ import Combine
 final class ChallengeDetailViewModel: ObservableObject {
 
     // ───────── OUTPUT ─────────
-    @Published private(set) var posts:      [Post]         = []
-    @Published private(set) var postsState: Loadable<Void> = .idle
-    @Published private(set) var isLoadingMore              = false
-    @Published private(set) var userCache:  [String: LiteUser] = [:]
+    @Published private(set) var posts: [Post]               = []
+    @Published private(set) var postsState: Loadable<Void>  = .idle
+    @Published private(set) var isLoadingMore               = false
+    @Published private(set) var userCache: [String: LiteUser] = [:]   // ← 고침
 
     /// “전체 / 내 게시물” 세그
     @Published var scope: FeedScope = .all {
@@ -25,38 +25,51 @@ final class ChallengeDetailViewModel: ObservableObject {
     }
 
     // ───────── PRIVATE ─────────
-    private let db         = Firestore.firestore()
-    private let pageSize   = 20
-    private var lastDoc   : DocumentSnapshot?
-    private(set) var currentCID = ""   // ← 접근자를 fileprivate → internal 로 완화
-    private var cancellables = Set<AnyCancellable>()
+    private let db       = Firestore.firestore()
+    private let pageSize = 20
+
+    private var lastDoc: DocumentSnapshot?
+    private(set) var currentCID = ""
+    private var cancellables    = Set<AnyCancellable>()
     private let userRepo: UserRepositoryProtocol = UserRepository()
 
-    // MARK: Init ---------------------------------------------------------
+    /// 현재 사용자 admin 여부
+    private var isAdmin = false
+
+    // MARK: - Init
     init() {
-        // 로그아웃 시 상태 초기화
-        NotificationCenter.default.publisher(for: .didSignOut)
-            .sink { [weak self] _ in Task { @MainActor in self?.resetState() } }
+        computeAdminFlag()                                     // 최초
+
+        NotificationCenter.default.publisher(for: .didSignIn)
+            .sink { [weak self] _ in self?.computeAdminFlag() }
             .store(in: &cancellables)
 
-        // 🔔 댓글 추가/삭제 → delta 반영
+        NotificationCenter.default.publisher(for: .didSignOut)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.isAdmin = false
+                    self?.resetState()
+                }
+            }
+            .store(in: &cancellables)
+
         NotificationCenter.default.publisher(for: .commentCountChanged)
-            .sink { [weak self] note in self?.handleCommentDelta(note) }
+            .sink { [weak self] n in self?.handleCommentDelta(n) }
             .store(in: &cancellables)
     }
 
-    // ───────── PUBLIC API ─────────
+    // MARK: - Public API
     func loadInitial(challengeId cid: String) async {
         currentCID = cid
         resetState()
         postsState = .loading
 
         do {
-            let (list, last) = try await fetchPage(after: nil)
-            posts      = list
+            let (page, last) = try await fetchPage(after: nil)
+            posts      = page
             lastDoc    = last
             postsState = .loaded(())
-            prefetchAuthors(from: list)
+            prefetchAuthors(from: page)
         } catch {
             postsState = .failed(error)
         }
@@ -67,21 +80,20 @@ final class ChallengeDetailViewModel: ObservableObject {
         isLoadingMore = true; defer { isLoadingMore = false }
 
         do {
-            let (list, last) = try await fetchPage(after: lastDoc)
-            posts += list
+            let (page, last) = try await fetchPage(after: lastDoc)
+            posts += page
             self.lastDoc = last
-            prefetchAuthors(from: list)
-        } catch {
-            print("🚨 pagination :", error.localizedDescription)
-        }
+            prefetchAuthors(from: page)
+        } catch { print("🚨 pagination:", error.localizedDescription) }
     }
 
+    // like / report / delete / caption …(기존과 동일) -------------------
     func like(_ post: Post) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         applyDelta(+1, for: post)
-        ReactionService.shared.updateReaction(
-            forPost: post.id, reactionType: "❤️", userId: uid
-        ) { [weak self] res in
+        ReactionService.shared.updateReaction(forPost: post.id,
+                                              reactionType: "❤️",
+                                              userId: uid) { [weak self] res in
             if case .failure = res {
                 Task { @MainActor in self?.applyDelta(-1, for: post) }
             }
@@ -91,24 +103,17 @@ final class ChallengeDetailViewModel: ObservableObject {
     func report(_ post: Post) {
         ReportService.shared.reportPost(postId: post.id) { [weak self] res in
             if case .success = res {
-                Task { @MainActor in
-                    self?.posts.removeAll { $0.id == post.id }
-                }
+                Task { @MainActor in self?.posts.removeAll { $0.id == post.id } }
             }
         }
     }
 
     func deletePost(_ post: Post) {
-        db.collection("challengePosts")
-          .document(post.id)
-          .delete { [weak self] err in
-              if err == nil {
-                  self?.posts.removeAll { $0.id == post.id }
-              }
-          }
+        db.collection("challengePosts").document(post.id).delete { [weak self] err in
+            if err == nil { self?.posts.removeAll { $0.id == post.id } }
+        }
     }
 
-    // 🆕 캡션 수정 --------------------------------------------------------
     func updateCaption(_ post: Post, to newText: String) {
         guard Auth.auth().currentUser?.uid == post.userId else { return }
 
@@ -117,29 +122,28 @@ final class ChallengeDetailViewModel: ObservableObject {
             ModalCoordinator.shared?.showToast(.init(message: "부적절하거나 80자 초과"))
             return
         }
-
         db.collection("challengePosts").document(post.id)
             .updateData(["caption": trimmed]) { [weak self] err in
                 guard err == nil else {
                     ModalCoordinator.shared?.showToast(.init(message: err!.localizedDescription))
                     return
                 }
-                if let idx = self?.posts.firstIndex(where: { $0.id == post.id }) {
-                    self?.posts[idx] = post.copy(caption: trimmed)
+                if let i = self?.posts.firstIndex(where: { $0.id == post.id }) {
+                    self?.posts[i] = post.copy(caption: trimmed)
                 }
             }
     }
-    // -------------------------------------------------------------------
 
-    // ───────── HELPERS ─────────
+    // MARK: - Helpers
     private func fetchPage(after doc: DocumentSnapshot?) async throws
           -> ([Post], DocumentSnapshot?) {
 
         var q = db.collection("challengePosts")
             .whereField("challengeId", isEqualTo: currentCID)
-            .whereField("reported",    isEqualTo: false)
             .order(by: "createdAt", descending: true)
             .limit(to: pageSize)
+
+        if !isAdmin { q = q.whereField("reported", isEqualTo: false) }
 
         if scope == .mine, let uid = Auth.auth().currentUser?.uid {
             q = q.whereField("userId", isEqualTo: uid)
@@ -149,58 +153,69 @@ final class ChallengeDetailViewModel: ObservableObject {
         let snap = try await q.getDocuments()
         let raw  = snap.documents.compactMap(Post.init)
 
-        let blocked  = BlockManager.shared.blockedUserIds
-        let filtered = raw.filter { $0.rejected != true && !blocked.contains($0.userId) }
+        let blocked = BlockManager.shared.blockedUserIds
+        let result  = isAdmin ? raw
+                              : raw.filter { $0.rejected != true && !blocked.contains($0.userId) }
 
-        return (filtered, snap.documents.last)
+        return (result, snap.documents.last)                 // ← copy(isAdmin:) 제거
     }
 
     private func resetState() {
-        posts = []
+        posts.removeAll()
         userCache.removeAll()
         lastDoc = nil
         postsState = .idle
     }
 
-    private func applyDelta(_ delta: Int, for post: Post) {
-        guard let idx = posts.firstIndex(where: { $0.id == post.id }) else { return }
-        var reactions = posts[idx].reactions
-        reactions["❤️", default: 0] = max(0, reactions["❤️", default: 0] + delta)
-        posts[idx] = posts[idx].copy(withReactions: reactions)
+    private func applyDelta(_ d: Int, for post: Post) {
+        guard let i = posts.firstIndex(where: { $0.id == post.id }) else { return }
+        var r = posts[i].reactions
+        r["❤️", default: 0] = max(0, r["❤️", default: 0] + d)
+        posts[i] = posts[i].copy(withReactions: r)
     }
 
     private func prefetchAuthors(from page: [Post]) {
-        let missing = Set(page.map(\.userId)).subtracting(userCache.keys)
-        guard !missing.isEmpty else { return }
+        let need = Set(page.map(\.userId)).subtracting(userCache.keys)
+        guard !need.isEmpty else { return }
 
-        userRepo.fetchUsers(withIds: Array(missing)) { [weak self] res in
+        userRepo.fetchUsers(withIds: Array(need)) { [weak self] res in
             if case .success(let users) = res {
                 users.forEach {
-                    self?.userCache[$0.id] = LiteUser(
-                        id: $0.id,
-                        nickname: $0.nickname,
-                        avatarURL: $0.effectiveProfileImageURL
-                    )
+                    self?.userCache[$0.id] = LiteUser(id: $0.id,
+                                                      nickname: $0.nickname,
+                                                      avatarURL: $0.effectiveProfileImageURL)
                 }
             }
         }
     }
 
-    // 🔔 commentCountChanged handler (± delta)
-    private func handleCommentDelta(_ note: Notification) {
+    private func handleCommentDelta(_ n: Notification) {
         guard
-            let pid   = note.userInfo?["postId"] as? String,
-            let delta = note.userInfo?["delta"]  as? Int,
-            let idx   = posts.firstIndex(where: { $0.id == pid })
+            let pid   = n.userInfo?["postId"] as? String,
+            let delta = n.userInfo?["delta"]  as? Int,
+            let i     = posts.firstIndex(where: { $0.id == pid })
         else { return }
 
-        let cur = posts[idx]
-        posts[idx] = cur.copy(commentsCount: max(0, cur.commentsCount + delta))
+        let cur = posts[i]
+        posts[i] = cur.copy(commentsCount: max(0, cur.commentsCount + delta))
     }
 
-    // Profanity filter (caption / comment 공용)
-    private func hasBadWords(_ text: String) -> Bool {
+    private func computeAdminFlag() {
+        Task.detached { [weak self] in
+            // 1️⃣ 백그라운드에서 토큰만 가져옴 — self 를 전혀 사용하지 않음
+            guard let user = Auth.auth().currentUser else { return }
+            let tok = try? await user.getIDTokenResult()
+            let flag = (tok?.claims["isAdmin"] as? Bool) ?? false
+
+            // 2️⃣ MainActor 로 돌아온 뒤에만 self 접근
+            await MainActor.run { [weak self] in
+                self?.isAdmin = flag
+            }
+        }
+    }
+
+    private func hasBadWords(_ t: String) -> Bool {
         let rx = "(시\\s*발|씨\\s*발|ㅅ\\s*ㅂ|좆|존나|f+u+c*k+|s+h+i+t+|b+i+t+c+h+)"
-        return text.range(of: rx, options: [.regularExpression, .caseInsensitive]) != nil
+        return t.range(of: rx, options: [.regularExpression,.caseInsensitive]) != nil
     }
 }

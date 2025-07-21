@@ -2,7 +2,7 @@
 //  BeMeChallengeApp.swift
 //  BeMeChallenge
 //
-//  Updated: 2025-07-10 – ModalCoordinator.shared 바인딩
+//  Updated: 2025-07-22 – admin 토픽 로그아웃 시 해제 추가
 //
 
 import SwiftUI
@@ -24,19 +24,19 @@ struct BeMeChallengeApp: App {
 
     // ViewModels & Coordinators
     @StateObject private var authVM  = AuthViewModel()
-    @StateObject private var modalC: ModalCoordinator   // ← wrapper만 선언
+    @StateObject private var modalC: ModalCoordinator
 
     // 싱글턴 바인딩
     init() {
         let coordinator = ModalCoordinator()
         _modalC = StateObject(wrappedValue: coordinator)
-        ModalCoordinator.shared = coordinator              // ← ★ 핵심
+        ModalCoordinator.shared = coordinator
     }
 
     var body: some Scene {
         WindowGroup {
 
-            /* 0️⃣ 루트 분기 */
+            // 0️⃣ 루트 뷰 분기
             Group {
                 if !authVM.isLoggedIn {
                     LoginViewWrapper()
@@ -49,41 +49,43 @@ struct BeMeChallengeApp: App {
                 }
             }
 
-            /* 1️⃣ 전역 객체 */
+            // 1️⃣ 전역 객체
             .environmentObject(authVM)
             .environmentObject(modalC)
 
-            /* 2️⃣ 로그인 상태 체크 */
+            // 2️⃣ 로그인 상태 체크
             .onAppear { authVM.checkLoginStatus() }
 
-            /* 3️⃣ 토픽 관리 ─ 로그인 시 */
+            // 3️⃣ 토픽 관리 ─ 로그인 시
             .onReceive(NotificationCenter.default.publisher(for: .didSignIn)) { _ in
                 if let uid = Auth.auth().currentUser?.uid {
                     Messaging.messaging().unsubscribe(fromTopic: "user-\(uid)")
                 }
                 Messaging.messaging().subscribe(toTopic: "new-challenge")
+                PushNotificationManager.shared.updateAdminTopic()        // 관리자 토픽 결정
                 PushNotificationManager.shared.syncFcmTokenIfNeeded()
             }
 
-            /* 3-b) 토픽 관리 ─ 로그아웃 시 */
+            // 3-b) 토픽 관리 ─ 로그아웃 시
             .onReceive(NotificationCenter.default.publisher(for: .didSignOut)) { _ in
                 if let uid = Auth.auth().currentUser?.uid {
                     Messaging.messaging().unsubscribe(fromTopic: "user-\(uid)")
                 }
                 Messaging.messaging().unsubscribe(fromTopic: "new-challenge")
+                Messaging.messaging().unsubscribe(fromTopic: "admin")    // ★ 추가: 관리자 토픽 해제
             }
 
-            /* 4️⃣ 마케팅 토픽 */
+            // 4️⃣ 마케팅 토픽
             .onChange(of: allowMarketing) { _, newVal in
                 PushNotificationManager.shared.updateMarketingTopic(newVal)
             }
 
-            /* 5️⃣ 오프라인 업로드 완료 토스트 */
+            // 5️⃣ 오프라인 업로드 완료 토스트
             .onReceive(NotificationCenter.default.publisher(for: .uploadQueueDidFlush)) { _ in
                 modalC.showToast(ToastItem(message: "📤 오프라인 업로드 완료!"))
             }
 
-            /* 7️⃣ 전역 Toast 배너 */
+            // 7️⃣ 전역 Toast 배너
             .overlay(alignment: .top) {
                 if let toast = modalC.toast {
                     ToastBannerView(toast: toast)
@@ -93,12 +95,12 @@ struct BeMeChallengeApp: App {
                 }
             }
 
-            /* 8️⃣ 외부 URL Sheet */
+            // 8️⃣ 외부 URL Sheet
             .sheet(item: $modalC.webURL) { url in
                 SafariView(url: url)
             }
 
-            /* 9️⃣ Markdown Sheet(EULA 등) */
+            // 9️⃣ Markdown Sheet(EULA 등)
             .sheet(item: $modalC.markdownText) { md in
                 MarkdownSheet(text: md)
                     .environmentObject(modalC)

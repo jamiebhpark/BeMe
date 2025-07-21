@@ -13,7 +13,7 @@ import SwiftUI
 import FirebaseCore
 import CryptoKit
 
-/// 로그인·재인증·스켈레톤 프로필 생성 담당
+/// 로그인‧재인증‧스켈레톤 프로필 생성 담당
 final class AuthService: NSObject, ObservableObject {
 
     // MARK: – Singleton
@@ -33,8 +33,8 @@ final class AuthService: NSObject, ObservableObject {
 
         Task { @MainActor in
             do {
-                let result = try await GIDSignIn.sharedInstance.signIn(
-                    withPresenting: presenting, hint: nil, additionalScopes: [])
+                let result = try await GIDSignIn.sharedInstance
+                    .signIn(withPresenting: presenting, hint: nil, additionalScopes: [])
 
                 guard
                     let idToken   = result.user.idToken?.tokenString,
@@ -54,6 +54,7 @@ final class AuthService: NSObject, ObservableObject {
                         completion(.failure(self.simpleErr("Firebase user nil"))); return
                     }
 
+                    // ── skeleton 프로필 보장 ─────────────────────
                     self.ensureUserDoc(
                         uid: fbUser.uid,
                         defaultNickname: fbUser.displayName ?? "익명"
@@ -61,6 +62,14 @@ final class AuthService: NSObject, ObservableObject {
                         if ok {
                             PushNotificationManager.shared.syncFcmTokenIfNeeded()
                         }
+
+                        // ▶ MOD: isAdmin 클레임 새로고침 후 admin 토픽 구독 반영
+                        Auth.auth().currentUser?
+                            .getIDTokenForcingRefresh(true) { _, _ in
+                                PushNotificationManager.shared.updateAdminTopic()
+                            }
+                        // ─────────────────────────────────────────
+
                         completion(.success(User(from: fbUser)))
                     }
                 }
@@ -112,6 +121,14 @@ final class AuthService: NSObject, ObservableObject {
                 if ok {
                     PushNotificationManager.shared.syncFcmTokenIfNeeded()
                 }
+
+                // ▶ MOD: isAdmin 클레임 새로고침 후 admin 토픽 구독 반영
+                Auth.auth().currentUser?
+                    .getIDTokenForcingRefresh(true) { _, _ in
+                        PushNotificationManager.shared.updateAdminTopic()
+                    }
+                // ─────────────────────────────────────────
+
                 completion(.success(User(from: fbUser)))
             }
         }
@@ -120,34 +137,26 @@ final class AuthService: NSObject, ObservableObject {
     // =====================================================================
     // MARK: Skeleton 프로필 생성
     // =====================================================================
-    /// users/{uid} 문서에 `nickname` 필드가 없으면 기본 닉네임으로 생성
-    /// - Parameter completion: `true` = 성공 / 이미 존재, `false` = 쓰기 실패
+    /// users/{uid} 문서에 nickname 필드가 없으면 기본 닉네임으로 생성
     private func ensureUserDoc(
         uid: String,
         defaultNickname: String,
-        completion: @escaping (Bool) -> Void          // ✅ Bool 결과
+        completion: @escaping (Bool) -> Void
     ) {
         let ref = Firestore.firestore().collection("users").document(uid)
 
         ref.getDocument { snap, _ in
             if let data = snap?.data(), data["nickname"] != nil {
-                completion(true)                       // 이미 존재
-                return
+                completion(true); return
             }
-
             ref.setData(["nickname": defaultNickname], merge: true) { err in
-                if let err {
-                    print("⚠️ ensureUserDoc failed:", err.localizedDescription)
-                    completion(false)
-                } else {
-                    completion(true)
-                }
+                completion(err == nil)
             }
         }
     }
 
     // =====================================================================
-    // MARK: 재인증 (Google / Apple) – 변경 없음
+    // MARK: 재인증 / 로그아웃 (생략 없이 그대로)
     // =====================================================================
     func reauthenticateWithGoogle(
         presenting: UIViewController,
@@ -160,8 +169,8 @@ final class AuthService: NSObject, ObservableObject {
 
         Task { @MainActor in
             do {
-                let result = try await GIDSignIn.sharedInstance.signIn(
-                    withPresenting: presenting, hint: nil, additionalScopes: [])
+                let result = try await GIDSignIn.sharedInstance
+                    .signIn(withPresenting: presenting, hint: nil, additionalScopes: [])
 
                 guard
                     let idToken = result.user.idToken?.tokenString,
@@ -200,9 +209,6 @@ final class AuthService: NSObject, ObservableObject {
         completion(.success(cred))
     }
 
-    // =====================================================================
-    // MARK: Sign Out – 변경 없음
-    // =====================================================================
     func signOut(completion: (Result<Void, Error>) -> Void) {
         do {
             try Auth.auth().signOut()
@@ -215,17 +221,17 @@ final class AuthService: NSObject, ObservableObject {
     // MARK: Helper – Nonce & SHA-256
     // =====================================================================
     private func randomNonce(length: Int = 32) -> String {
-        let chars = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        currentNonce = String((0..<length).compactMap { _ in chars.randomElement() })
+        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        currentNonce = String((0..<length).compactMap { _ in charset.randomElement() })
         return currentNonce!
     }
+
     private func sha256(_ input: String) -> String {
         SHA256.hash(data: Data(input.utf8))
               .map { String(format: "%02x", $0) }
               .joined()
     }
 
-    // MARK: – NSError Helper
     private func simpleErr(_ msg: String) -> NSError {
         .init(domain: "AuthService",
               code: -1,

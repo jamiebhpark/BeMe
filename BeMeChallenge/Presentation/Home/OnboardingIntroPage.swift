@@ -2,36 +2,28 @@
 //  OnboardingIntroPage.swift
 //  BeMeChallenge
 //
+
 import SwiftUI
 
-// MARK: - 인트로 단일 페이지 뷰
 struct OnboardingIntroPage: View {
     let page: OnboardingPage
 
     var body: some View {
-        ZStack {
-            // ── 배경
-            Image(page.imageName)
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
+        VStack(spacing: 20) {
+            Spacer()
 
-            // ── 텍스트(하단 정렬)
-            VStack(spacing: 24) {
-                Spacer()                       // 상단을 비워 전체 배경 노출
+            Text(page.title)
+                .font(.largeTitle.bold())
+                .foregroundColor(.white)
 
-                Text(page.title)
-                    .font(.largeTitle.bold())
-                    .foregroundColor(Color("TextPrimary"))
-
-                Text(page.description)
-                    .font(.body)
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(Color("TextPrimary"))
-            }
-            .padding(.horizontal, 24)          // 좌 · 우 여백
-            .padding(.bottom, 100)             // 홈바 위 여백 (원하면 값 조정)
-            
+            Text(page.description)
+                .font(.body)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.white.opacity(0.9))
+                .padding(.horizontal, 32)
+                .padding(.bottom, 40)  // 홈 인디케이터 여유
         }
+        // 이 뷰 자체는 safe-area 내에서만 동작하게 두겠습니다.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

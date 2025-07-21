@@ -2,7 +2,7 @@
 //  CommentsSheet.swift
 //  BeMeChallenge
 //
-//  Updated: 2025-07-15 – 댓글 *수정* 기능 & 빈 상태 메시지
+//  Updated: 2025-07-26 – 댓글 신고 플래그 기반 하이라이트
 //
 
 import SwiftUI
@@ -11,29 +11,28 @@ import FirebaseAuth
 struct CommentsSheet: View {
 
     let post: Post
+
+    // VM & Env
     @StateObject private var vm: CommentsViewModel
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var modalC: ModalCoordinator
+    @EnvironmentObject      private var modalC: ModalCoordinator
 
+    // Local UI State
     @State private var input = ""
-
-    // 🆕 수정 관련 State ---------------------------
     @State private var showingEditAlert  = false
     @State private var editedText        = ""
     @State private var editingComment: Comment?
-    // --------------------------------------------
 
-    // MARK: Init
+    // Init
     init(post: Post) {
         self.post = post
         _vm = StateObject(wrappedValue: CommentsViewModel(postId: post.id))
     }
 
-    // MARK: Body
     var body: some View {
         VStack(spacing: 0) {
             header
-            list
+            listSection
             inputBar
         }
         .onTapGesture { hideKeyboard() }
@@ -46,23 +45,19 @@ struct CommentsSheet: View {
                     .ignoresSafeArea(.container, edges: .top)
             }
         }
-        // 🆕 Alert with TextField ------------------
-        .alert("댓글 수정",
-               isPresented: $showingEditAlert,
-               actions: {
-                   TextField("", text: $editedText, axis: .vertical)
-                       .lineLimit(3, reservesSpace: true)
-                   Button("저장") {
-                       if let target = editingComment {
-                           vm.edit(target, newText: editedText)
-                       }
-                   }
-                   Button("취소", role: .cancel) { }
-               },
-               message: { Text("300자까지 입력 가능합니다.") })
+        .alert("댓글 수정", isPresented: $showingEditAlert) {
+            TextField("", text: $editedText, axis: .vertical)
+                .lineLimit(3, reservesSpace: true)
+            Button("저장") {
+                if let c = editingComment {
+                    vm.edit(c, newText: editedText)
+                }
+            }
+            Button("취소", role: .cancel) { }
+        } message: { Text("300자까지 입력 가능합니다.") }
+        .onAppear { scrollToFlagged() }
     }
 
-    // MARK: Header
     private var header: some View {
         HStack {
             Text("댓글 \(vm.comments.count)")
@@ -74,64 +69,71 @@ struct CommentsSheet: View {
         .background(Color(.systemGroupedBackground))
     }
 
-    // MARK: List (+ 빈 상태)
-    private var list: some View {
+    private var listSection: some View {
         ScrollViewReader { proxy in
-            ZStack {
-                List {
-                    ForEach(vm.comments) { c in
-                        CommentRow(comment: c, user: vm.userCache[c.userId])
-                            .listRowSeparator(.hidden)
-                            .contextMenu { contextMenu(for: c) }   // 🆕
-                    }
+            List {
+                ForEach(vm.comments) { c in
+                    CommentRow(comment: c,
+                               user: vm.userCache[c.userId],
+                               isFlagged: c.reported)
+                        .listRowSeparator(.hidden)
+                        .contextMenu { contextMenu(for: c) }
                 }
-                .listStyle(.plain)
-                .onChange(of: vm.comments.count) { _, _ in
-                    if let last = vm.comments.last {
-                        withAnimation {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
-                    }
-                }
-
-                if vm.comments.isEmpty {
-                    Text("아직 댓글이 없습니다")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
+            }
+            .listStyle(.plain)
+            // ↑ 여기서 iOS17 deprecation fix: 두 파라미터 클로저 사용
+            .onChange(of: vm.comments) { _old, _new in
+                scrollToFlagged(using: proxy)
+            }
+            .onAppear {
+                scrollToFlagged(using: proxy)
             }
         }
     }
 
-    // 🆕 컨텍스트 메뉴 빼서 함수화
+    /// 신고된 첫 댓글로 스크롤
+    private func scrollToFlagged(using proxy: ScrollViewProxy? = nil) {
+        guard let flagged = vm.comments.first(where: { $0.reported })?.id else { return }
+        if let p = proxy {
+            withAnimation { p.scrollTo(flagged, anchor: .center) }
+        }
+    }
+
+    // Context Menu
     @ViewBuilder
     private func contextMenu(for c: Comment) -> some View {
-        if c.userId == Auth.auth().currentUser?.uid {
+        let me       = Auth.auth().currentUser?.uid
+        let isOwner  = c.userId == me
+        let canDelete = isOwner || c.isAdmin
+
+        if isOwner {
             Button("수정") {
                 editingComment = c
-                editedText = c.text
+                editedText     = c.text
                 showingEditAlert = true
             }
+        }
+
+        if canDelete {
             Button("삭제", role: .destructive) { vm.delete(c) }
         } else {
             Button("신고", role: .destructive) { vm.report(c) }
-        }
-        // 🔥 [NEW] 작성자 차단
-        Button("차단", role: .destructive) {
-            BlockService.shared.block(userId: c.userId) { result in
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success:
-                        modalC.showToast(.init(message: "차단되었습니다"))
-                    case .failure:
-                        modalC.showToast(.init(message: "차단에 실패했습니다"))
+            Button("차단", role: .destructive) {
+                BlockService.shared.block(userId: c.userId) { result in
+                    DispatchQueue.main.async {
+                        let msg: String
+                        if case .success = result {
+                            msg = "차단되었습니다"
+                        } else {
+                            msg = "차단 실패"
+                        }
+                        modalC.showToast(.init(message: msg))
                     }
                 }
             }
         }
     }
 
-    // MARK: Input bar
     private var inputBar: some View {
         HStack {
             TextField("댓글 달기…", text: $input, axis: .vertical)
@@ -139,7 +141,6 @@ struct CommentsSheet: View {
                 .padding(8)
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
             Button("전송") {
                 vm.addComment(text: input)
                 input = ""
@@ -150,20 +151,26 @@ struct CommentsSheet: View {
     }
 
     // MARK: Row
-    @ViewBuilder
-    private func CommentRow(comment: Comment, user: LiteUser?) -> some View {
+    private func CommentRow(
+        comment: Comment,
+        user: LiteUser?,
+        isFlagged: Bool
+    ) -> some View {
         HStack(alignment: .top, spacing: 8) {
             avatar(for: user)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(displayName(for: user))
                         .font(.subheadline).bold()
+                    if isFlagged {
+                        Image(systemName: "flag.fill")
+                            .foregroundColor(.orange)
+                    }
                     Text(comment.createdAt, formatter: Self.df)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
-                Text(comment.text)
-                    .font(.subheadline)
+                Text(comment.text).font(.subheadline)
                 if comment.editedAt != nil {
                     Text("(수정됨)")
                         .font(.caption2)
@@ -173,9 +180,11 @@ struct CommentsSheet: View {
             Spacer()
         }
         .padding(.vertical, 6)
+        .background(isFlagged ? Color.yellow.opacity(0.35) : Color.clear)
         .id(comment.id)
     }
 
+    // MARK: Helpers
     private func avatar(for user: LiteUser?) -> some View {
         Group {
             if let url = user?.avatarURL {
@@ -184,7 +193,7 @@ struct CommentsSheet: View {
                     case .success(let img): img.resizable().scaledToFill()
                     default: Image("defaultAvatar").resizable()
                     }
-                }.id(url)
+                }
             } else {
                 Image("defaultAvatar").resizable()
             }
@@ -194,8 +203,8 @@ struct CommentsSheet: View {
     }
 
     private func displayName(for user: LiteUser?) -> String {
-        let name = user?.nickname.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? "익명" : name
+        let raw = user?.nickname.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return raw.isEmpty ? "익명" : raw
     }
 
     private static let df: DateFormatter = {
@@ -203,12 +212,13 @@ struct CommentsSheet: View {
     }()
 }
 
-/* ------------- 작은 유틸 ------------- */
 #if canImport(UIKit)
 private extension View {
     func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                        to: nil, from: nil, for: nil)
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
     }
 }
 #endif

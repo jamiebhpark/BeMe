@@ -5,24 +5,24 @@
 import Foundation
 import FirebaseFirestore
 
-/// Firestore → 챌린지 포스트 모델
+/// challengePosts/{postId}
 struct Post: Identifiable, Hashable, Codable {
 
-    // MARK: Stored properties
-    let id:            String
-    let challengeId:   String
-    let userId:        String
-    let imageUrl:      String
-    let createdAt:     Date
-    let reactions:     [String:Int]
-    let reported:      Bool
-    let rejected:      Bool?          // nil = 대기, false = 통과, true = 차단
-    let caption:       String?
-    let commentsCount: Int
-    let streakNum:     Int?           // 🔥 필수 챌린지 연속
-    let openCountNum:  Int?           // 🏅 오픈 챌린지 누적  ← NEW
+    // MARK: Stored
+    let id            : String
+    let challengeId   : String
+    let userId        : String
+    let imageUrl      : String
+    let createdAt     : Date
+    let reactions     : [String:Int]
+    let reported      : Bool
+    let rejected      : Bool?          // nil = 대기, false = 통과, true = 차단
+    let caption       : String?
+    let commentsCount : Int
+    let streakNum     : Int?
+    let openCountNum  : Int?
 
-    // MARK: Firestore → Post
+    // MARK: Firestore → Post (QueryDocumentSnapshot 전용)
     init?(document: QueryDocumentSnapshot) {
         let d = document.data()
         guard
@@ -34,21 +34,47 @@ struct Post: Identifiable, Hashable, Codable {
             let rep  = d["reported"]    as? Bool
         else { return nil }
 
-        self.id            = document.documentID
-        self.challengeId   = cid
-        self.userId        = uid
-        self.imageUrl      = url
-        self.createdAt     = ts.dateValue()
-        self.reactions     = reac
-        self.reported      = rep
-        self.rejected      = d["rejected"]      as? Bool
-        self.caption       = d["caption"]       as? String
-        self.commentsCount = d["commentsCount"] as? Int ?? 0
-        self.streakNum     = d["streakNum"]     as? Int
-        self.openCountNum  = d["openCountNum"]  as? Int          // ← 추가
+        id            = document.documentID
+        challengeId   = cid
+        userId        = uid
+        imageUrl      = url
+        createdAt     = ts.dateValue()
+        reactions     = reac
+        reported      = rep
+        rejected      = d["rejected"]      as? Bool
+        caption       = d["caption"]       as? String
+        commentsCount = d["commentsCount"] as? Int ?? 0
+        streakNum     = d["streakNum"]     as? Int
+        openCountNum  = d["openCountNum"]  as? Int
     }
 
-    // MARK: Manual init (예: 프리뷰)
+    // MARK: Firestore → Post (DocumentSnapshot 전용)
+    init?(snapshot: DocumentSnapshot) {
+        guard let d = snapshot.data() else { return nil }
+        guard
+            let cid  = d["challengeId"] as? String,
+            let uid  = d["userId"]      as? String,
+            let url  = d["imageUrl"]    as? String,
+            let ts   = d["createdAt"]   as? Timestamp,
+            let reac = d["reactions"]   as? [String:Int],
+            let rep  = d["reported"]    as? Bool
+        else { return nil }
+
+        id            = snapshot.documentID
+        challengeId   = cid
+        userId        = uid
+        imageUrl      = url
+        createdAt     = ts.dateValue()
+        reactions     = reac
+        reported      = rep
+        rejected      = d["rejected"]      as? Bool
+        caption       = d["caption"]       as? String
+        commentsCount = d["commentsCount"] as? Int ?? 0
+        streakNum     = d["streakNum"]     as? Int
+        openCountNum  = d["openCountNum"]  as? Int
+    }
+
+    // MARK: Manual init (Preview / 테스트용)
     init(
         id: String = UUID().uuidString,
         challengeId: String,
@@ -61,7 +87,7 @@ struct Post: Identifiable, Hashable, Codable {
         caption: String? = nil,
         commentsCount: Int = 0,
         streakNum: Int? = nil,
-        openCountNum: Int? = nil         // ← 추가
+        openCountNum: Int? = nil
     ) {
         self.id            = id
         self.challengeId   = challengeId
@@ -78,13 +104,15 @@ struct Post: Identifiable, Hashable, Codable {
     }
 }
 
-// MARK: - Helper copy
+// MARK: – Shallow copy helpers
 extension Post {
-    func copy(withReactions r: [String:Int]? = nil,
-              caption: String? = nil,          // ← 추가
-              streakNum: Int? = nil,
-              openCountNum: Int? = nil,
-              commentsCount: Int? = nil) -> Post {
+    func copy(
+        withReactions r: [String:Int]? = nil,
+        caption: String? = nil,
+        streakNum: Int? = nil,
+        openCountNum: Int? = nil,
+        commentsCount: Int? = nil
+    ) -> Post {
         Post(
             id: id,
             challengeId: challengeId,
@@ -94,10 +122,10 @@ extension Post {
             reactions: r ?? reactions,
             reported: reported,
             rejected: rejected,
-            caption: caption ?? self.caption,          // 👈
+            caption: caption ?? self.caption,
             commentsCount: commentsCount ?? self.commentsCount,
             streakNum: streakNum ?? self.streakNum,
-            openCountNum: openCountNum ?? self.openCountNum      // ← 추가
+            openCountNum: openCountNum ?? self.openCountNum
         )
     }
 }
